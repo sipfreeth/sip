@@ -1,0 +1,165 @@
+/* public/theme.css — ธีมกลาง "Ink & Signal" ใช้ร่วมกันทุกหน้าในระบบ
+   แก้สีแบรนด์/ดีไซน์ทีเดียวที่นี่ มีผลกับทุกหน้าอัตโนมัติ */
+
+:root {
+  --brand-ink: #14161f;
+  --brand-primary: #ff5b2e;
+  --brand-primary-dark: #e64a1f;
+  --brand-primary-light: #fff1ec;
+  --success: #059669;
+  --warning: #d4a017;
+  --danger: #dc2626;
+  --info: #2a78d6;
+  --border: #e5e7eb;
+  --text-muted: #6b7280;
+}
+
+/* โลโก้/ชื่อแบรนด์ */
+.brand {
+  color: var(--brand-ink) !important;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--brand-primary);
+}
+
+/* แท็บเมนู — เส้นใต้และตัวอักษรตอน active ใช้สีแบรนด์ */
+.tab.active {
+  color: var(--brand-ink) !important;
+  border-bottom-color: var(--brand-primary) !important;
+}
+.tab:hover:not(.active) {
+  color: var(--brand-ink) !important;
+}
+
+/* ปุ่มหลัก (แบบ class และแบบ submit เปล่าในหน้า login/signup) */
+.btn-primary,
+.card form button[type='submit'],
+.card > form > button {
+  background: var(--brand-primary) !important;
+  transition: background 0.15s ease;
+}
+.btn-primary:hover,
+.card form button[type='submit']:hover {
+  background: var(--brand-primary-dark) !important;
+}
+
+/* ปุ่มเล็กสีเขียว (approve/save) คงไว้ตามเดิม เพราะสื่อความหมาย "สำเร็จ/ยืนยัน" ชัดเจนอยู่แล้ว */
+.btn-small:not(.btn-danger):not(.btn-muted) {
+  background: var(--success) !important;
+}
+.btn-danger {
+  background: var(--danger) !important;
+}
+
+/* ลิงก์ทั่วไป */
+a.link,
+.link a {
+  color: var(--info);
+}
+
+/* การ์ด/ส่วนต่างๆ — เงานุ่มขึ้น มุมโค้งมนขึ้นเล็กน้อย */
+.section,
+.card {
+  box-shadow: 0 1px 2px rgba(20, 22, 31, 0.04), 0 2px 8px rgba(20, 22, 31, 0.06) !important;
+  border-radius: 14px !important;
+}
+
+/* ป้ายสถานะ (badge/tier-tag) — คงสีสถานะเดิม แค่เพิ่มความคมชัด */
+.tier-tag {
+  letter-spacing: 0.02em;
+  font-weight: 700 !important;
+}
+
+/* focus state ชัดเจนขึ้น เพื่อความน่าเชื่อถือ (โดยเฉพาะหน้ากรอกข้อมูลบัตร/รหัสผ่าน) */
+input:focus,
+select:focus,
+textarea:focus,
+button:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 1px;
+}
+
+/* Empty state ที่ดูตั้งใจมากกว่าข้อความเปล่าๆ */
+.empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Loading spinner ใช้ร่วมกัน */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--brand-primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Toast แจ้งผลสำเร็จ/ผิดพลาด แบบลอย ใช้ผ่าน JS: showToast('ข้อความ', 'success'|'error') */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--brand-ink);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  opacity: 0;
+  transition: all 0.25s ease;
+  pointer-events: none;
+  z-index: 1000;
+  max-width: 90vw;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.toast.success {
+  background: var(--success);
+}
+.toast.error {
+  background: var(--danger);
+}
+
+/* ตารางบนมือถือ — เลื่อนแนวนอนลื่นขึ้น กันตารางบีบจนอ่านไม่ออก */
+@media (max-width: 640px) {
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  header {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 8px;
+    padding: 12px 16px !important;
+  }
+  nav {
+    width: 100%;
+    overflow-x: auto;
+  }
+  main {
+    padding: 16px !important;
+  }
+}
