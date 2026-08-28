@@ -54,6 +54,7 @@ export default async function handler(req, res) {
       .select('slot_number, sponsor_content(file_name, file_path, file_type), sponsors(company_name)')
       .eq('office_account_id', officeId)
       .eq('payment_status', 'paid')
+      .eq('approval_status', 'approved')
       .eq('week_start', weekStart),
   ]);
 
