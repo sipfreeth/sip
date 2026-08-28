@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabaseClient.js';
 import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { requireAdmin, can } from '../../lib/adminAuth.js';
 import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
-import { getSignedContentUrl, getSignedSlipUrl } from '../../lib/sponsorArea.js';
+import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent } from '../../lib/sponsorArea.js';
 
 const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors'];
 
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   if (page === 'admins') content = await renderAdminsTab(admin);
   if (page === 'office') content = await renderOfficeTab(admin, req.query.office_id || null);
   if (page === 'account') content = renderAccountTab(admin);
-  if (page === 'sponsors') content = await renderSponsorsTab(admin);
+  if (page === 'sponsors') content = await renderSponsorsTab(admin, req.query);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, admin, content));
@@ -928,46 +928,44 @@ function renderOfficeAccountManagement(offices) {
 }
 
 // ---------- Sponsors tab: อนุมัติ Content + ยืนยันรับเงินการจอง ----------
-async function renderSponsorsTab(admin) {
+async function renderSponsorsTab(admin, query) {
   const canManageSponsors = can(admin.role, 'manage_sponsor_accounts');
-  const [pendingContentRes, bookingsRes, sponsorsRes] = await Promise.all([
-    supabase
-      .from('sponsor_content')
-      .select('id, file_name, file_path, file_type, created_at, sponsors(company_name)')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true }),
+
+  const [pendingBookings, allBookingsRes] = await Promise.all([
+    getPendingBookings(),
     supabase
       .from('slot_bookings')
-      .select('id, slot_number, week_start, price, payment_status, payment_method, payment_reference, payment_slip_path, created_at, sponsors(company_name), office_accounts(office_name), sponsor_content(file_name)')
+      .select('id, slot_number, week_start, price, payment_status, approval_status, payment_method, payment_reference, payment_slip_path, created_at, sponsors(company_name, sponsor_code), office_accounts(office_name), sponsor_content(file_name)')
       .order('week_start', { ascending: true })
       .limit(50),
-    supabase.from('sponsors').select('*').order('company_name'),
   ]);
 
-  const pendingContent = pendingContentRes.data || [];
-  const bookings = bookingsRes.data || [];
-  const sponsors = sponsorsRes.data || [];
+  const allBookings = allBookingsRes.data || [];
 
-  const contentCards = await Promise.all(
-    pendingContent.map(async (c) => {
-      const url = await getSignedContentUrl(c.file_path);
-      const preview =
-        c.file_type === 'video'
-          ? `<video src="${url}" controls style="width:100%; max-height:160px; border-radius:8px;"></video>`
-          : `<img src="${url}" style="width:100%; max-height:160px; object-fit:cover; border-radius:8px;" />`;
+  // ---------- ส่วนที่ 1: การจองที่รอตรวจสอบไฟล์ก่อนขึ้น CMS (ทุก Sponsor) ----------
+  const pendingCards = await Promise.all(
+    pendingBookings.map(async (b) => {
+      const c = b.sponsor_content;
+      const url = c ? await getSignedContentUrl(c.file_path) : null;
+      const preview = !c
+        ? '<p class="muted">ไม่มีไฟล์</p>'
+        : c.file_type === 'video'
+        ? `<video src="${url}" controls style="width:100%; max-height:160px; border-radius:8px;"></video>`
+        : `<img src="${url}" style="width:100%; max-height:160px; object-fit:cover; border-radius:8px;" />`;
       return `
         <div class="content-review-card">
           ${preview}
-          <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${c.file_name}</p>
-          <p class="hint">จาก: ${c.sponsors?.company_name || '-'}</p>
+          <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${c?.file_name || '-'}</p>
+          <p class="hint">${b.sponsors?.company_name || '-'} (${b.sponsors?.sponsor_code || '-'}) — ${b.office_accounts?.office_name || '-'} Slot ${b.slot_number}</p>
+          <p class="hint">สัปดาห์ ${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
           <div style="display:flex; gap:8px; margin-top:8px;">
-            <form method="POST" action="/api/admin/action?action=sponsor_content_review" style="display:inline;">
-              <input type="hidden" name="content_id" value="${c.id}" />
+            <form method="POST" action="/api/admin/action?action=booking_review" style="display:inline;">
+              <input type="hidden" name="booking_id" value="${b.id}" />
               <input type="hidden" name="decision" value="approved" />
               <button class="btn-small">อนุมัติ</button>
             </form>
-            <form method="POST" action="/api/admin/action?action=sponsor_content_review" style="display:inline;">
-              <input type="hidden" name="content_id" value="${c.id}" />
+            <form method="POST" action="/api/admin/action?action=booking_review" style="display:inline;">
+              <input type="hidden" name="booking_id" value="${b.id}" />
               <input type="hidden" name="decision" value="rejected" />
               <button class="btn-small btn-danger">ไม่ผ่าน</button>
             </form>
@@ -976,24 +974,130 @@ async function renderSponsorsTab(admin) {
     })
   );
 
-  const bookingRows = await Promise.all(
-    bookings.map(async (b) => {
+  // ---------- ส่วนที่ 2: ค้นหา Sponsor รายตัว ----------
+  const keyword = query.q || '';
+  let searchResultsHtml = '';
+  if (keyword.trim()) {
+    const results = await searchSponsors(keyword.trim());
+    searchResultsHtml =
+      results
+        .map(
+          (s) => `
+        <a href="/api/admin/sponsors?q=${encodeURIComponent(keyword)}&sponsor_id=${s.id}" class="link" style="display:block; padding:8px 0; border-bottom:1px solid #f0f0f0;">
+          <strong>${s.sponsor_code}</strong> — ${s.company_name} <span class="hint">(${s.email})</span>
+        </a>`
+        )
+        .join('') || '<p class="muted">ไม่พบ Sponsor ที่ตรงกับคำค้นหา</p>';
+  }
+
+  const searchSection = `
+    <div class="section">
+      <h2>ค้นหา Sponsor</h2>
+      <p class="hint">พิมพ์ชื่อบริษัท หรือ Sponsor Code (เช่น "01")</p>
+      <form method="GET" action="/api/admin/sponsors" style="display:flex; gap:8px; max-width:420px;">
+        <input type="text" name="q" value="${keyword}" placeholder="ชื่อบริษัท หรือ Code" class="table-input" style="flex:1;" autofocus />
+        <button type="submit" class="btn-small">ค้นหา</button>
+      </form>
+      ${keyword.trim() ? `<div style="margin-top:12px;">${searchResultsHtml}</div>` : ''}
+    </div>`;
+
+  // ---------- ส่วนที่ 3: รายละเอียด Sponsor ที่เลือกจากผลค้นหา ----------
+  let detailSection = '';
+  if (query.sponsor_id) {
+    const sponsor = await getSponsorById(query.sponsor_id);
+    if (sponsor) {
+      const [content, bookings] = await Promise.all([
+        getSponsorContent(sponsor.id),
+        supabase
+          .from('slot_bookings')
+          .select('id, slot_number, week_start, price, payment_status, approval_status, office_accounts(office_name), sponsor_content(file_name)')
+          .eq('sponsor_id', sponsor.id)
+          .order('week_start', { ascending: false }),
+      ]);
+
+      const contentRows = await Promise.all(
+        content.map(async (c) => {
+          const url = await getSignedContentUrl(c.file_path);
+          const preview =
+            c.file_type === 'video'
+              ? `<video src="${url}" controls style="width:100%; max-height:120px; border-radius:8px;"></video>`
+              : `<img src="${url}" style="width:100%; max-height:120px; object-fit:cover; border-radius:8px;" />`;
+          return `<div class="content-review-card">${preview}<p style="font-size:12px; margin:6px 0 0;">${c.file_name}</p></div>`;
+        })
+      );
+
+      const bookingRows = (bookings.data || [])
+        .map((b) => {
+          const payLabel = { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'คืนเงินแล้ว' }[b.payment_status] || b.payment_status;
+          const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
+          return `
+            <tr>
+              <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
+              <td>${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+              <td>${b.sponsor_content?.file_name || '-'}</td>
+              <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
+              <td style="text-align:center;">${payLabel}</td>
+              <td style="text-align:center;">${approvalLabel}</td>
+            </tr>`;
+        })
+        .join('');
+
+      const editForm = canManageSponsors
+        ? `
+        <form method="POST" action="/api/admin/action?action=sponsor_account_update" class="stack-form" style="max-width:600px;">
+          <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div><label>ชื่อบริษัท</label><input type="text" name="company_name" value="${sponsor.company_name || ''}" required /></div>
+            <div><label>อีเมล (username)</label><input type="email" name="email" value="${sponsor.email || ''}" required /></div>
+            <div><label>เลขประจำตัวผู้เสียภาษี</label><input type="text" name="tax_id" value="${sponsor.tax_id || ''}" /></div>
+            <div><label>ชื่อผู้ติดต่อ</label><input type="text" name="contact_name" value="${sponsor.contact_name || ''}" /></div>
+            <div><label>เบอร์โทร</label><input type="text" name="contact_phone" value="${sponsor.contact_phone || ''}" /></div>
+            <div><label>ประเภทธุรกิจ</label><input type="text" name="business_type" value="${sponsor.business_type || ''}" /></div>
+          </div>
+          <label>ที่อยู่</label>
+          <input type="text" name="address" value="${sponsor.address || ''}" />
+          <label>ตั้งรหัสผ่านใหม่ (เว้นว่างถ้าไม่เปลี่ยน)</label>
+          <input type="password" name="password" />
+          <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึก</button>
+        </form>
+        <form method="POST" action="/api/admin/action?action=sponsor_account_delete" onsubmit="return confirm('ลบบัญชี Sponsor นี้ถาวร? ประวัติการจองทั้งหมดจะหายไปด้วย')" style="margin-top:8px;">
+          <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
+          <button type="submit" class="btn-small btn-danger">ลบบัญชีนี้</button>
+        </form>`
+        : `<p class="hint">ชื่อบริษัท: ${sponsor.company_name} — อีเมล: ${sponsor.email} — เบอร์โทร: ${sponsor.contact_phone || '-'}</p>`;
+
+      detailSection = `
+        <div class="section">
+          <h2>${sponsor.company_name} <span class="hint">(Code: ${sponsor.sponsor_code})</span></h2>
+          ${editForm}
+        </div>
+        <div class="section">
+          <h2>คลัง Content (${content.length} ไฟล์)</h2>
+          <div class="content-grid">${contentRows.join('') || '<p class="muted">ยังไม่มีไฟล์</p>'}</div>
+        </div>
+        <div class="section">
+          <h2>ประวัติการจอง</h2>
+          <table>
+            <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th></tr>
+            ${bookingRows || '<tr><td colspan="6" class="muted">ยังไม่มีการจอง</td></tr>'}
+          </table>
+        </div>`;
+    } else {
+      detailSection = `<div class="section"><p class="muted">ไม่พบ Sponsor นี้</p></div>`;
+    }
+  }
+
+  const bookingRows = allBookings
+    .map((b) => {
       const isPaid = b.payment_status === 'paid';
-      const methodLabel = { omise: 'บัตร', transfer: 'โอนเงิน', manual: 'ยืนยันมือ' }[b.payment_method] || '-';
-      let slipLink = '-';
-      if (b.payment_slip_path) {
-        const url = await getSignedSlipUrl(b.payment_slip_path);
-        slipLink = url ? `<a href="${url}" target="_blank" class="link">ดูสลิป</a>` : '-';
-      }
+      const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
       return `
         <tr>
-          <td>${b.sponsors?.company_name || '-'}</td>
+          <td>${b.sponsors?.company_name || '-'} <span class="hint">(${b.sponsors?.sponsor_code || '-'})</span></td>
           <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
           <td>${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
           <td>${b.sponsor_content?.file_name || '-'}</td>
           <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
-          <td style="text-align:center;">${methodLabel}</td>
-          <td style="text-align:center;">${slipLink}</td>
           <td style="text-align:center;">
             ${
               isPaid
@@ -1004,6 +1108,7 @@ async function renderSponsorsTab(admin) {
                    </form>`
             }
           </td>
+          <td style="text-align:center;">${approvalLabel}</td>
           <td style="text-align:center;">
             <form method="POST" action="/api/admin/action?action=booking_cancel" onsubmit="return confirm('ยกเลิกการจองนี้?')" style="display:inline;">
               <input type="hidden" name="booking_id" value="${b.id}" />
@@ -1012,67 +1117,26 @@ async function renderSponsorsTab(admin) {
           </td>
         </tr>`;
     })
-  );
-
-  const sponsorAccountSection = canManageSponsors ? renderSponsorAccountManagement(sponsors) : '';
+    .join('');
 
   return `
-    ${sponsorAccountSection}
     <div class="section">
-      <h2>Content รอตรวจสอบ (${pendingContent.length})</h2>
-      <div class="content-grid">${contentCards.join('') || '<p class="muted">ไม่มีไฟล์รอตรวจสอบ</p>'}</div>
+      <h2>การจองที่รอตรวจสอบไฟล์ก่อนขึ้น CMS (${pendingBookings.length})</h2>
+      <div class="content-grid">${pendingCards.join('') || '<p class="muted">ไม่มีรายการรอตรวจสอบ</p>'}</div>
     </div>
+    ${searchSection}
+    ${detailSection}
     <div class="section">
-      <h2>การจองทั้งหมด</h2>
+      <h2>การจองทั้งหมด (ภาพรวม)</h2>
       <table>
-        <tr><th>Sponsor</th><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">วิธีชำระ</th><th style="text-align:center;">สลิป</th><th style="text-align:center;">สถานะ</th><th></th></tr>
-        ${bookingRows.join('') || '<tr><td colspan="9" class="muted">ยังไม่มีการจอง</td></tr>'}
+        <tr><th>Sponsor</th><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th><th></th></tr>
+        ${bookingRows || '<tr><td colspan="8" class="muted">ยังไม่มีการจอง</td></tr>'}
       </table>
     </div>
     <style>
       .content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 12px; }
       .content-review-card { border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px; }
     </style>`;
-}
-
-// จัดการข้อมูลบัญชี Sponsor ทั้งหมด (แก้ไข/ลบ) — super_admin เท่านั้น
-function renderSponsorAccountManagement(sponsors) {
-  const rows = sponsors
-    .map(
-      (s) => `
-      <div class="section" style="margin-bottom:12px;">
-        <form method="POST" action="/api/admin/action?action=sponsor_account_update" class="stack-form" style="max-width:600px;">
-          <input type="hidden" name="sponsor_id" value="${s.id}" />
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-            <div><label>ชื่อบริษัท</label><input type="text" name="company_name" value="${s.company_name || ''}" required /></div>
-            <div><label>อีเมล (username)</label><input type="email" name="email" value="${s.email || ''}" required /></div>
-            <div><label>เลขประจำตัวผู้เสียภาษี</label><input type="text" name="tax_id" value="${s.tax_id || ''}" /></div>
-            <div><label>ชื่อผู้ติดต่อ</label><input type="text" name="contact_name" value="${s.contact_name || ''}" /></div>
-            <div><label>เบอร์โทร</label><input type="text" name="contact_phone" value="${s.contact_phone || ''}" /></div>
-            <div><label>ประเภทธุรกิจ</label><input type="text" name="business_type" value="${s.business_type || ''}" /></div>
-          </div>
-          <label>ที่อยู่</label>
-          <input type="text" name="address" value="${s.address || ''}" />
-          <label>ตั้งรหัสผ่านใหม่ (เว้นว่างถ้าไม่เปลี่ยน)</label>
-          <input type="password" name="password" />
-          <div style="display:flex; gap:8px; margin-top:12px;">
-            <button type="submit" class="btn-primary">บันทึก</button>
-          </div>
-        </form>
-        <form method="POST" action="/api/admin/action?action=sponsor_account_delete" onsubmit="return confirm('ลบบัญชี Sponsor นี้ถาวร? ประวัติการจองทั้งหมดจะหายไปด้วย')" style="margin-top:8px;">
-          <input type="hidden" name="sponsor_id" value="${s.id}" />
-          <button type="submit" class="btn-small btn-danger">ลบบัญชีนี้</button>
-        </form>
-      </div>`
-    )
-    .join('');
-
-  return `
-    <div class="section">
-      <h2>จัดการบัญชี Sponsor (Super Admin เท่านั้น)</h2>
-      <p class="hint">${sponsors.length} บัญชี — แก้ไขข้อมูลบริษัท อีเมล (username) หรือรีเซ็ตรหัสผ่านได้จากตรงนี้</p>
-    </div>
-    ${rows || '<div class="section"><p class="muted">ยังไม่มีบัญชี Sponsor</p></div>'}`;
 }
 
 

@@ -28,6 +28,7 @@ import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
 import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
+import { updateBookingApproval } from '../../lib/sponsorArea.js';
 
 async function readBody(req) {
   let body = '';
@@ -396,18 +397,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  // ---------- 9. SPONSOR CONTENT REVIEW (super_admin, admin, staff — ใช้ view_history เป็นตัวแทนสิทธิ์ดูแลทั่วไป) ----------
-  if (actionParam === 'sponsor_content_review') {
-    const contentId = params.get('content_id');
+  // ---------- 9. BOOKING REVIEW (อนุมัติ/ไม่อนุมัติ Content ที่เลือกลง Slot ก่อนขึ้น CMS) ----------
+  if (actionParam === 'booking_review') {
+    const bookingId = params.get('booking_id');
     const decision = params.get('decision'); // 'approved' หรือ 'rejected'
     if (!['approved', 'rejected'].includes(decision)) {
       res.status(400).send('decision ไม่ถูกต้อง');
       return;
     }
-    await supabase
-      .from('sponsor_content')
-      .update({ status: decision, reviewed_by: `${admin.username}`, reviewed_at: new Date().toISOString() })
-      .eq('id', contentId);
+    await updateBookingApproval(bookingId, decision, admin.username);
     res.writeHead(302, { Location: '/api/admin/sponsors' });
     res.end();
     return;
