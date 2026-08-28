@@ -17,6 +17,7 @@ import {
   getBookingGroup,
   getPlayCountForBooking,
   MAX_FILES_PER_SPONSOR,
+  MAX_FILE_MB,
 } from '../../lib/sponsorArea.js';
 
 const PAGES = ['content', 'book', 'bookings', 'profile'];
@@ -48,13 +49,10 @@ async function renderContentTab(sponsor) {
         item.file_type === 'video'
           ? `<video src="${url}" controls style="width:100%; max-height:140px; border-radius:8px;"></video>`
           : `<img src="${url}" style="width:100%; max-height:140px; object-fit:cover; border-radius:8px;" />`;
-      const statusLabel = { pending: 'รอตรวจสอบ', approved: 'อนุมัติแล้ว', rejected: 'ไม่ผ่าน' }[item.status];
-      const statusColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[item.status];
       return `
         <div class="content-card">
           ${preview}
           <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${item.file_name}</p>
-          <span class="tier-tag" style="background:${statusColor};">${statusLabel}</span>
           <form method="POST" action="/api/sponsor/action?action=delete_content" onsubmit="return confirm('ลบไฟล์นี้?')" style="margin-top:8px;">
             <input type="hidden" name="content_id" value="${item.id}" />
             <button class="btn-small btn-danger" type="submit">ลบ</button>
@@ -69,7 +67,8 @@ async function renderContentTab(sponsor) {
     ? `
       <div class="section">
         <h2>อัปโหลดไฟล์ใหม่</h2>
-        <p class="hint">JPEG, PNG, MP4 — ไม่เกิน 125MB — ใช้ได้สูงสุด ${MAX_FILES_PER_SPONSOR} ไฟล์ต่อบัญชี (ตอนนี้มี ${items.length}/${MAX_FILES_PER_SPONSOR})</p>
+        <p class="hint">JPEG, PNG, MP4 — ไม่เกิน ${MAX_FILE_MB}MB — ใช้ได้สูงสุด ${MAX_FILES_PER_SPONSOR} ไฟล์ต่อบัญชี (ตอนนี้มี ${items.length}/${MAX_FILES_PER_SPONSOR})</p>
+        <p class="hint">อัปโหลดเสร็จใช้เลือกลง Slot ได้ทันที — Admin จะตรวจสอบตอนที่คุณเลือกใส่ Slot อีกครั้งก่อนขึ้นจอจริง</p>
         <form class="sponsor-upload-form">
           <input type="file" name="file" accept="image/jpeg,image/png,video/mp4" required />
           <button type="submit" class="btn-primary" style="margin-top:10px;">อัปโหลด</button>
@@ -95,7 +94,7 @@ async function renderContentTab(sponsor) {
           const statusEl = form.querySelector('.upload-status');
           const file = fileInput.files[0];
           if (!file) return;
-          if (file.size > 125 * 1024 * 1024) { statusEl.textContent = 'ไฟล์ใหญ่เกิน 125MB'; return; }
+          if (file.size > ${MAX_FILE_MB} * 1024 * 1024) { statusEl.textContent = 'ไฟล์ใหญ่เกิน ${MAX_FILE_MB}MB'; return; }
 
           statusEl.textContent = 'กำลังขอสิทธิ์อัปโหลด...';
           try {
@@ -162,7 +161,7 @@ async function renderBookTab(sponsor, query) {
   const activeOffice = offices.find((o) => String(o.id) === String(activeId)) || offices[0];
   const slotCount = activeOffice.sponsor_slot_count || 18;
 
-  const approvedContent = (await getSponsorContent(sponsor.id)).filter((c) => c.status === 'approved');
+  const approvedContent = await getSponsorContent(sponsor.id);
 
   const officeOptions = offices
     .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} — ${Number(o.price_per_week).toLocaleString()} บาท/สัปดาห์</option>`)
@@ -232,6 +231,7 @@ async function renderBookTab(sponsor, query) {
     <div class="section">
       <h2>3. เลือก Slot และไฟล์ที่จะแสดง (เลือกได้หลาย Slot พร้อมกัน แต่ละอันเลือกไฟล์แยกกันได้)</h2>
       <p class="hint">ว่าง ${availableCount}/${slotCount} slot ในสัปดาห์นี้ — ราคา ${Number(activeOffice.price_per_week).toLocaleString()} บาท/slot</p>
+      <p class="hint">หลังจองและชำระเงินแล้ว ทีมงานจะตรวจสอบไฟล์ที่เลือกอีกครั้งก่อนส่งขึ้นจอจริง</p>
       <form method="POST" action="/api/sponsor/action?action=create_bookings" id="bookForm">
         <input type="hidden" name="office_id" value="${activeOffice.id}" />
         <input type="hidden" name="week_start" value="${activeWeekIso}" />
@@ -251,7 +251,12 @@ async function renderBookTab(sponsor, query) {
           select.style.display = cb.checked ? 'block' : 'none';
           select.disabled = !cb.checked;
           select.required = cb.checked;
-          if (!cb.checked) select.value = '';
+          if (cb.checked) {
+            // เลือกไฟล์แรกที่อนุมัติแล้วให้อัตโนมัติ (ตัวเลือกแรกคือ "-- เลือกไฟล์ --" ว่างเปล่า ข้ามไปตัวถัดไป)
+            if (select.options.length > 1) select.selectedIndex = 1;
+          } else {
+            select.value = '';
+          }
           updateTotal();
         });
       });
@@ -275,7 +280,7 @@ async function renderBookTab(sponsor, query) {
       .slot-full { background: #f0f0f0; color: #9ca3af; text-align: center; cursor: not-allowed; }
       .slot-available:has(input:checked) { border-color: #06c755; background: #06c75511; }
     </style>`
-    : `<div class="section"><p class="hint" style="color:#e76f51;">คุณยังไม่มีไฟล์ที่ผ่านการอนุมัติ ต้องอัปโหลดและรออนุมัติก่อนถึงจะจองได้</p></div>`;
+    : `<div class="section"><p class="hint" style="color:#e76f51;">คุณยังไม่มีไฟล์ในคลัง ต้องอัปโหลดไฟล์ในแท็บ Content Library ก่อนถึงจะจองได้</p></div>`;
 
   return picker + weekPicker + bookingForm;
 }
@@ -293,7 +298,7 @@ async function renderBookingsTab(sponsor, query) {
   }
 
   const bookings = await getSponsorBookings(sponsor.id);
-  const approvedContent = (await getSponsorContent(sponsor.id)).filter((c) => c.status === 'approved');
+  const approvedContent = await getSponsorContent(sponsor.id);
   const contentOptions = (currentId) =>
     approvedContent.map((c) => `<option value="${c.id}" ${c.id === currentId ? 'selected' : ''}>${c.file_name}</option>`).join('');
 
@@ -301,6 +306,8 @@ async function renderBookingsTab(sponsor, query) {
     bookings.map(async (b) => {
       const statusLabel = { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'คืนเงินแล้ว' }[b.payment_status] || b.payment_status;
       const statusColor = { unpaid: '#e76f51', paid: '#06c755', refunded: '#9ca3af' }[b.payment_status] || '#9ca3af';
+      const approvalLabel = { pending: 'รอตรวจสอบไฟล์', approved: 'ไฟล์ผ่านแล้ว', rejected: 'ไฟล์ไม่ผ่าน' }[b.approval_status] || b.approval_status;
+      const approvalColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[b.approval_status] || '#9ca3af';
       const weekDate = new Date(b.week_start);
       const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
 
@@ -331,6 +338,7 @@ async function renderBookingsTab(sponsor, query) {
           <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>
           <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
           <td style="text-align:center;"><span class="tier-tag" style="background:${statusColor};">${statusLabel}</span></td>
+          <td style="text-align:center;"><span class="tier-tag" style="background:${approvalColor};">${approvalLabel}</span></td>
           <td style="text-align:center;">${playCount === null ? '<span class="muted">-</span>' : `<strong>${playCount.toLocaleString()}</strong> รอบ`}</td>
           <td>${actions}</td>
         </tr>`;
@@ -342,8 +350,8 @@ async function renderBookingsTab(sponsor, query) {
       <h2>สล็อตที่จองไว้ทั้งหมด</h2>
       <p class="hint">รายการ "รอชำระเงิน" ต้องจ่ายภายใน 15 นาทีหลังจอง ไม่งั้นระบบจะคืน slot ให้คนอื่นอัตโนมัติ</p>
       <table>
-        <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะ</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
-        ${rows.join('') || '<tr><td colspan="8" class="muted">ยังไม่มีการจอง</td></tr>'}
+        <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะจ่ายเงิน</th><th style="text-align:center;">สถานะไฟล์</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
+        ${rows.join('') || '<tr><td colspan="9" class="muted">ยังไม่มีการจอง</td></tr>'}
       </table>
     </div>`;
 }

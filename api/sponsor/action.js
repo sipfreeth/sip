@@ -336,19 +336,19 @@ export default async function handler(req, res) {
       return;
     }
 
-    // เช็คไฟล์ที่เลือกของแต่ละ slot แยกกัน — ต้องเป็นของ sponsor คนนี้จริง และอนุมัติแล้วจริงทุกอัน
-    const { data: approvedRows } = await supabase
-      .from('sponsor_content')
-      .select('id')
-      .eq('sponsor_id', sponsor.id)
-      .eq('status', 'approved');
-    const approvedIds = new Set((approvedRows || []).map((r) => r.id));
+    // เช็คไฟล์ที่เลือกของแต่ละ slot แยกกัน — แค่ต้องเป็นของ sponsor คนนี้จริง (ไม่ต้องอนุมัติก่อนแล้ว — จะไปอนุมัติตอนตรวจสอบการจอง)
+    const { data: ownedRows } = await supabase.from('sponsor_content').select('id').eq('sponsor_id', sponsor.id);
+    const ownedIds = new Set((ownedRows || []).map((r) => r.id));
+    const onlyContentId = ownedRows && ownedRows.length === 1 ? ownedRows[0].id : null;
 
     const slotContentMap = {};
     for (const slotNumber of slotNumbers) {
-      const contentId = params.get(`content_slot_${slotNumber}`);
-      if (!contentId || !approvedIds.has(contentId)) {
-        res.status(400).send(`กรุณาเลือกไฟล์ที่อนุมัติแล้วให้ครบทุก slot (Slot ${slotNumber} ยังไม่ได้เลือกไฟล์ หรือไฟล์ไม่ถูกต้อง)`);
+      let contentId = params.get(`content_slot_${slotNumber}`);
+      // เผื่อ dropdown ไม่ได้ถูกเลือกมา (เช่น JS ไม่ทำงาน) — ถ้ามีไฟล์แค่ไฟล์เดียวในคลัง ใช้ไฟล์นั้นให้อัตโนมัติ
+      if (!contentId && onlyContentId) contentId = onlyContentId;
+
+      if (!contentId || !ownedIds.has(contentId)) {
+        res.status(400).send(`กรุณาเลือกไฟล์ให้ครบทุก slot (Slot ${slotNumber} ยังไม่ได้เลือกไฟล์ หรือไฟล์ไม่ถูกต้อง)`);
         return;
       }
       slotContentMap[slotNumber] = contentId;
@@ -386,12 +386,12 @@ export default async function handler(req, res) {
     const contentId = params.get('sponsor_content_id');
     const { data: contentRow } = await supabase
       .from('sponsor_content')
-      .select('id, status')
+      .select('id')
       .eq('id', contentId)
       .eq('sponsor_id', sponsor.id)
       .maybeSingle();
-    if (!contentRow || contentRow.status !== 'approved') {
-      res.status(400).send('ไฟล์นี้ยังไม่ผ่านการอนุมัติ หรือไม่ใช่ของบัญชีคุณ');
+    if (!contentRow) {
+      res.status(400).send('ไม่ใช่ไฟล์ของบัญชีคุณ');
       return;
     }
     await updateBookingContent(params.get('booking_id'), sponsor.id, contentId);
