@@ -340,18 +340,22 @@ export default async function handler(req, res) {
     }
 
     // เช็คไฟล์ที่เลือกของแต่ละ slot แยกกัน — แค่ต้องเป็นของ sponsor คนนี้จริง (ไม่ต้องอนุมัติก่อนแล้ว — จะไปอนุมัติตอนตรวจสอบการจอง)
-    const { data: ownedRows } = await supabase.from('sponsor_content').select('id').eq('sponsor_id', sponsor.id);
+    const { data: ownedRows } = await supabase
+      .from('sponsor_content')
+      .select('id')
+      .eq('sponsor_id', sponsor.id)
+      .order('created_at', { ascending: false });
     const ownedIds = new Set((ownedRows || []).map((r) => r.id));
-    const onlyContentId = ownedRows && ownedRows.length === 1 ? ownedRows[0].id : null;
+    const fallbackContentId = ownedRows && ownedRows.length ? ownedRows[0].id : null;
 
     const slotContentMap = {};
     for (const slotNumber of slotNumbers) {
       let contentId = params.get(`content_slot_${slotNumber}`);
-      // เผื่อ dropdown ไม่ได้ถูกเลือกมา (เช่น JS ไม่ทำงาน) — ถ้ามีไฟล์แค่ไฟล์เดียวในคลัง ใช้ไฟล์นั้นให้อัตโนมัติ
-      if (!contentId && onlyContentId) contentId = onlyContentId;
+      // เผื่อ dropdown ของ slot นี้ไม่ได้ถูกเลือกมา (เช่น JS พลาด) — ใช้ไฟล์ล่าสุดในคลังแทนแล้วให้แก้ทีหลังได้ในแท็บ "สล็อตของฉัน"
+      if ((!contentId || !ownedIds.has(contentId)) && fallbackContentId) contentId = fallbackContentId;
 
       if (!contentId || !ownedIds.has(contentId)) {
-        res.status(400).send(`กรุณาเลือกไฟล์ให้ครบทุก slot (Slot ${slotNumber} ยังไม่ได้เลือกไฟล์ หรือไฟล์ไม่ถูกต้อง)`);
+        res.status(400).send(`กรุณาอัปโหลดไฟล์เข้าคลัง Content ก่อนถึงจะจองได้ (Slot ${slotNumber})`);
         return;
       }
       slotContentMap[slotNumber] = contentId;
