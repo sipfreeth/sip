@@ -28,7 +28,7 @@ import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
 import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
-import { updateBookingApproval } from '../../lib/sponsorArea.js';
+import { updateBookingApproval, grantSponsorCredit } from '../../lib/sponsorArea.js';
 
 async function readBody(req) {
   let body = '';
@@ -405,7 +405,24 @@ export default async function handler(req, res) {
       res.status(400).send('decision ไม่ถูกต้อง');
       return;
     }
+
     await updateBookingApproval(bookingId, decision, admin.username);
+
+    if (decision === 'rejected') {
+      // เนื้อหาไม่ผ่านอนุมัติ → ยกเลิก Slot นี้ ไม่คืนเงินสด แต่คืนเป็นเครดิตแทน (ใช้จองครั้งต่อไปได้ อายุ 1 ปี)
+      const { data: booking } = await supabase
+        .from('slot_bookings')
+        .select('sponsor_id, price, payment_status')
+        .eq('id', bookingId)
+        .single();
+
+      if (booking && booking.payment_status === 'paid') {
+        await grantSponsorCredit(booking.sponsor_id, booking.price, `rejected_booking:${bookingId}`);
+        await supabase.from('slot_bookings').update({ payment_status: 'refunded' }).eq('id', bookingId);
+        // payment_status = 'refunded' ที่นี่หมายถึง "คืนเป็นเครดิตแล้ว" (ไม่ใช่คืนเงินสดจริง) — Slot จะว่างกลับมาให้จองใหม่ได้ทันที
+      }
+    }
+
     res.writeHead(302, { Location: '/api/admin/sponsors' });
     res.end();
     return;

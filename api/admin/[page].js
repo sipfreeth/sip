@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabaseClient.js';
 import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { requireAdmin, can } from '../../lib/adminAuth.js';
 import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
-import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent } from '../../lib/sponsorArea.js';
+import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance } from '../../lib/sponsorArea.js';
 
 const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors'];
 
@@ -1006,13 +1006,14 @@ async function renderSponsorsTab(admin, query) {
   if (query.sponsor_id) {
     const sponsor = await getSponsorById(query.sponsor_id);
     if (sponsor) {
-      const [content, bookings] = await Promise.all([
+      const [content, bookings, creditBalance] = await Promise.all([
         getSponsorContent(sponsor.id),
         supabase
           .from('slot_bookings')
           .select('id, slot_number, week_start, price, payment_status, approval_status, office_accounts(office_name), sponsor_content(file_name)')
           .eq('sponsor_id', sponsor.id)
           .order('week_start', { ascending: false }),
+        getSponsorCreditBalance(sponsor.id),
       ]);
 
       const contentRows = await Promise.all(
@@ -1069,6 +1070,7 @@ async function renderSponsorsTab(admin, query) {
       detailSection = `
         <div class="section">
           <h2>${sponsor.company_name} <span class="hint">(Code: ${sponsor.sponsor_code})</span></h2>
+          <p style="font-size:14px; margin:4px 0 12px;">เครดิตคงเหลือ: <strong style="color:#06c755;">${creditBalance.toLocaleString()} บาท</strong></p>
           ${editForm}
         </div>
         <div class="section">
