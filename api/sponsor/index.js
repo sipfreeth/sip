@@ -299,6 +299,22 @@ async function renderBookTab(sponsor, query) {
           alert('กรุณาเลือกอย่างน้อย 1 slot');
           return;
         }
+        // กันเหนียว: ถ้า dropdown ของ slot ไหนยังไม่มีค่า (auto-select ตอนติ๊กพลาดไป) ให้เซ็ตให้ก่อน submit จริง
+        let missing = false;
+        checked.forEach((cb) => {
+          const select = document.querySelector('.slot-content-select[data-slot="' + cb.dataset.slot + '"]');
+          if (select) {
+            if (!select.value && select.options.length > 1) {
+              select.selectedIndex = 1;
+            }
+            if (!select.value) missing = true;
+          }
+        });
+        if (missing) {
+          e.preventDefault();
+          alert('กรุณาเลือกไฟล์ให้ครบทุก slot ที่ติ๊กไว้ (คุณอาจยังไม่มีไฟล์ในคลัง)');
+          return;
+        }
         document.getElementById('slotNumbersField').value = Array.from(checked).map((cb) => cb.dataset.slot).join(',');
       });
     </script>
