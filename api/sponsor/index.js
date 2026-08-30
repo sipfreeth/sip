@@ -405,7 +405,10 @@ async function renderBookingsTab(sponsor, query) {
 
   const rows = await Promise.all(
     bookings.map(async (b) => {
-      const statusLabel = { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'คืนเงินแล้ว' }[b.payment_status] || b.payment_status;
+      const statusLabel =
+        b.payment_status === 'refunded' && b.approval_status === 'rejected'
+          ? 'ไม่ผ่านตรวจสอบ (ยกเลิก)'
+          : { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'ได้เครดิตคืนแล้ว' }[b.payment_status] || b.payment_status;
       const statusColor = { unpaid: '#e76f51', paid: '#06c755', refunded: '#9ca3af' }[b.payment_status] || '#9ca3af';
       const approvalLabel = { pending: 'รอตรวจสอบไฟล์', approved: 'ไฟล์ผ่านแล้ว', rejected: 'ไฟล์ไม่ผ่าน' }[b.approval_status] || b.approval_status;
       const approvalColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[b.approval_status] || '#9ca3af';
