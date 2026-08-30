@@ -291,9 +291,11 @@ export default async function handler(req, res) {
   if (['office_account_create', 'office_account_update', 'office_account_delete'].includes(actionParam)) {
     if (!requirePermission(res, admin.role, 'manage_offices')) return;
 
+    let dbError = null;
+
     if (actionParam === 'office_account_create') {
       const hash = await bcrypt.hash(params.get('password'), 10);
-      await supabase.from('office_accounts').insert({
+      const { error } = await supabase.from('office_accounts').insert({
         office_name: params.get('office_name'),
         username: params.get('username'),
         email: (params.get('email') || '').trim().toLowerCase() || null,
@@ -301,6 +303,7 @@ export default async function handler(req, res) {
         price_per_week: Number(params.get('price_per_week') || 0),
         sponsor_slot_count: Number(params.get('sponsor_slot_count') || 18),
       });
+      dbError = error;
     }
 
     if (actionParam === 'office_account_update') {
@@ -312,11 +315,20 @@ export default async function handler(req, res) {
       };
       const newPassword = params.get('password');
       if (newPassword) updates.password_hash = await bcrypt.hash(newPassword, 10);
-      await supabase.from('office_accounts').update(updates).eq('id', params.get('office_id'));
+      const { error } = await supabase.from('office_accounts').update(updates).eq('id', params.get('office_id'));
+      dbError = error;
     }
 
     if (actionParam === 'office_account_delete') {
-      await supabase.from('office_accounts').delete().eq('id', params.get('office_id'));
+      const { error } = await supabase.from('office_accounts').delete().eq('id', params.get('office_id'));
+      dbError = error;
+    }
+
+    if (dbError) {
+      // แสดง error จริงจากฐานข้อมูล แทนที่จะเงียบแล้วทำเหมือนสำเร็จ (บั๊กเดิม)
+      const friendly = dbError.code === '23505' ? 'Username หรือ Email นี้ถูกใช้ไปแล้ว กรุณาใช้ค่าอื่น' : dbError.message;
+      res.status(400).send(`บันทึกไม่สำเร็จ: ${friendly}`);
+      return;
     }
 
     res.writeHead(302, { Location: '/api/admin/office' });
