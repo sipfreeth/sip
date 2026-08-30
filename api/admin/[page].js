@@ -1,539 +1,1296 @@
-// api/admin/action.js
+// api/admin/[page].js
 //
-// ศูนย์รวม Action ทั้งหมดของระบบ Admin บน Vercel Serverless Function
-// ช่วยประหยัดจำนวน Serverless Functions ไม่ให้เกินโควต้า 12 Functions บน Hobby Plan
+// หน้า Admin รวมทุกฟังก์ชันไว้ที่เดียว สลับด้วยแท็บเมนู:
+//   /api/admin/dashboard  — สรุปยอด + กราฟเทียบ Campaign + filter ดูตาม Campaign
+//   /api/admin/members    — รายชื่อสมาชิก + filter ตาม Tier + ดูรายละเอียดรายคน (ประวัติ engagement/redemption)
+//   /api/admin/rewards    — จัดการของรางวัล (เพิ่ม/แก้/เปิดปิด/ลบ)
+//   /api/admin/campaigns  — จัดการ Campaign (เพิ่ม/แก้/เปิดปิด/ลบ)
+//   /api/admin/admins     — จัดการบัญชีแอดมิน (super_admin เท่านั้น)
 //
-// เรียกผ่าน query parameter 'action' เช่น:
-//   GET  /api/admin/action?action=login          — แสดงฟอร์ม login
-//   POST /api/admin/action?action=login           — ประมวลผล login
-//   GET  /api/admin/action?action=logout          — logout
-//   POST /api/admin/action?action=mark_used       — ยืนยัน redemption ว่าใช้แล้ว (สำหรับรายการ pending เก่า)
-//   POST /api/admin/action?action=redemption_ship_status — ตั้งสถานะจัดส่ง (เลือกจาก dropdown)
-//   POST /api/admin/action?action=reward_create   — เพิ่มของรางวัล
-//   POST /api/admin/action?action=reward_update   — แก้ของรางวัล
-//   POST /api/admin/action?action=reward_toggle   — เปิด/ปิดของรางวัล
-//   POST /api/admin/action?action=reward_delete   — ลบของรางวัล
-//   POST /api/admin/action?action=campaign_create — เพิ่ม Campaign
-//   POST /api/admin/action?action=campaign_update — แก้ Campaign
-//   POST /api/admin/action?action=campaign_toggle — เปิด/ปิด Campaign
-//   POST /api/admin/action?action=campaign_delete — ลบ Campaign
-//   POST /api/admin/action?action=admin_create        — เพิ่มบัญชีแอดมิน (super_admin เท่านั้น)
-//   POST /api/admin/action?action=admin_update_role   — เปลี่ยน role แอดมิน (super_admin เท่านั้น)
-//   POST /api/admin/action?action=admin_reset_password — รีเซ็ตรหัสผ่านแอดมิน (super_admin เท่านั้น)
-//   POST /api/admin/action?action=admin_delete        — ลบบัญชีแอดมิน (super_admin เท่านั้น)
-//   POST /api/admin/action?action=member_adjust   — ปรับ Tier Score/Point สมาชิกด้วยมือ
-//   POST /api/admin/action?action=member_delete   — ลบสมาชิก (ต้อง confirm=yes)
+// ต้อง login ก่อนถึงจะเข้าได้ สิทธิ์แต่ละปุ่มเช็คตาม role (lib/adminAuth.js)
 
-import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
-import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
-import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
-import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
-import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
+import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
+import { requireAdmin, can } from '../../lib/adminAuth.js';
+import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
+import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
+import { getAdminChatThreads } from '../../lib/chat.js';
 
-async function readBody(req) {
-  let body = '';
-  for await (const chunk of req) body += chunk;
-  return new URLSearchParams(body);
-}
+const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat'];
 
 export default async function handler(req, res) {
-  const actionParam = req.query.action;
-
-  // ---------- 1. LOGIN (ไม่ต้อง login มาก่อน) ----------
-  if (actionParam === 'login') {
-    if (req.method === 'GET') {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.status(200).send(renderLoginPage());
-      return;
-    }
-    if (req.method === 'POST') {
-      const params = await readBody(req);
-      const username = (params.get('username') || '').trim();
-      const password = params.get('password') || '';
-
-      const { data: user } = await supabase
-        .from('admin_users')
-        .select('username, password_hash')
-        .eq('username', username)
-        .maybeSingle();
-
-      const validPassword = user ? await bcrypt.compare(password, user.password_hash) : false;
-
-      if (!user || !validPassword) {
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.status(200).send(renderLoginPage('Username หรือ Password ไม่ถูกต้อง'));
-        return;
-      }
-
-      res.setHeader('Set-Cookie', createSessionCookie(username));
-      res.writeHead(302, { Location: '/api/admin/dashboard' });
-      res.end();
-      return;
-    }
-    res.status(405).send('Method not allowed');
-    return;
-  }
-
-  // ---------- 2. LOGOUT (ไม่ต้อง login มาก่อน) ----------
-  if (actionParam === 'logout') {
-    res.setHeader('Set-Cookie', clearSessionCookie());
-    res.writeHead(302, { Location: '/api/admin/action?action=login' });
-    res.end();
-    return;
-  }
-
-  // ---------- ทุก action ต่อจากนี้ ต้อง login ก่อน ----------
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
-  // ---------- Poll แชท (GET เพื่อรีเฟรชข้อความถี่ๆ) ----------
-  if (actionParam === 'chat_poll' && req.method === 'GET') {
-    const threadType = req.query.thread_type;
-    const threadId = req.query.thread_id;
-    const messages = await getMessages(threadType, threadId);
-    await markThreadRead(threadType, threadId, 'admin');
-    res.setHeader('Content-Type', 'application/json');
-    res.status(200).json({ messages });
-    return;
+  let page = PAGES.includes(req.query.page) ? req.query.page : 'dashboard';
+  if (page === 'admins' && !can(admin.role, 'manage_admins') && !can(admin.role, 'manage_staff')) page = 'dashboard'; // กันเข้าตรงๆ ผ่าน URL
+
+  let content = '';
+  if (page === 'dashboard') {
+    const campaignsParam = req.query.campaigns;
+    const filterCampaigns = campaignsParam ? (Array.isArray(campaignsParam) ? campaignsParam : [campaignsParam]) : [];
+    content = await renderDashboardTab(filterCampaigns);
   }
+  if (page === 'members') content = await renderMembersTab(admin, req.query.tier || null, req.query.detail || null);
+  if (page === 'rewards') content = await renderRewardsTab(admin);
+  if (page === 'campaigns') content = await renderCampaignsTab(admin, req);
+  if (page === 'admins') content = await renderAdminsTab(admin);
+  if (page === 'office') content = await renderOfficeTab(admin, req.query.office_id || null);
+  if (page === 'account') content = renderAccountTab(admin);
+  if (page === 'sponsors') content = await renderSponsorsTab(admin, req.query);
+  if (page === 'chat') content = await renderChatTab(admin, req.query);
 
-  if (req.method !== 'POST') {
-    res.status(405).send('Method not allowed');
-    return;
-  }
-
-  const params = await readBody(req);
-
-  // ---------- 3. MARK REDEMPTION USED ----------
-  if (actionParam === 'mark_used') {
-    const code = params.get('code');
-    if (code) {
-      await supabase
-        .from('redemptions')
-        .update({ status: 'used', used_at: new Date().toISOString() })
-        .eq('redemption_code', code)
-        .eq('status', 'pending');
-    }
-    res.writeHead(302, { Location: '/api/admin/dashboard' });
-    res.end();
-    return;
-  }
-
-  // ---------- 3b. TOGGLE SHIPPING STATUS (จัดส่งแล้ว / ยังไม่จัดส่ง) ----------
-  if (actionParam === 'redemption_ship_status') {
-    const redemptionId = params.get('redemption_id');
-    const newStatus = params.get('shipping_status');
-    if (redemptionId && ['shipped', 'not_shipped'].includes(newStatus)) {
-      await supabase.from('redemptions').update({ shipping_status: newStatus }).eq('id', redemptionId);
-    }
-    const backTo = params.get('back_to') || '/api/admin/dashboard';
-    res.writeHead(302, { Location: backTo });
-    res.end();
-    return;
-  }
-
-  // ---------- 4. REWARD ACTIONS ----------
-  if (actionParam === 'reward_create') {
-    if (!requirePermission(res, admin.role, 'create_reward')) return;
-    await supabase.from('rewards').insert({
-      name: params.get('name'),
-      points_cost: Number(params.get('points_cost')),
-    });
-    res.writeHead(302, { Location: '/api/admin/rewards' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'reward_update') {
-    if (!requirePermission(res, admin.role, 'edit_reward')) return;
-    await supabase
-      .from('rewards')
-      .update({ name: params.get('name'), points_cost: Number(params.get('points_cost')) })
-      .eq('id', params.get('id'));
-    res.writeHead(302, { Location: '/api/admin/rewards' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'reward_toggle') {
-    if (!requirePermission(res, admin.role, 'toggle_reward')) return;
-    const { data: reward } = await supabase.from('rewards').select('active').eq('id', params.get('id')).single();
-    if (reward) await supabase.from('rewards').update({ active: !reward.active }).eq('id', params.get('id'));
-    res.writeHead(302, { Location: '/api/admin/rewards' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'reward_delete') {
-    if (!requirePermission(res, admin.role, 'delete_reward')) return;
-    await supabase.from('rewards').delete().eq('id', params.get('id'));
-    res.writeHead(302, { Location: '/api/admin/rewards' });
-    res.end();
-    return;
-  }
-
-  // ---------- 5. CAMPAIGN ACTIONS ----------
-  if (actionParam === 'campaign_create') {
-    if (!requirePermission(res, admin.role, 'create_campaign')) return;
-    await supabase.from('creatives').insert({
-      creative_id: params.get('creative_id'),
-      destination_url: params.get('destination_url'),
-    });
-    res.writeHead(302, { Location: '/api/admin/campaigns' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'campaign_update') {
-    if (!requirePermission(res, admin.role, 'edit_campaign')) return;
-    await supabase
-      .from('creatives')
-      .update({ destination_url: params.get('destination_url') })
-      .eq('creative_id', params.get('creative_id'));
-    res.writeHead(302, { Location: '/api/admin/campaigns' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'campaign_toggle') {
-    if (!requirePermission(res, admin.role, 'toggle_campaign')) return;
-    const { data: c } = await supabase
-      .from('creatives')
-      .select('active')
-      .eq('creative_id', params.get('creative_id'))
-      .single();
-    if (c) await supabase.from('creatives').update({ active: !c.active }).eq('creative_id', params.get('creative_id'));
-    res.writeHead(302, { Location: '/api/admin/campaigns' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'campaign_delete') {
-    if (!requirePermission(res, admin.role, 'delete_campaign')) return;
-    await supabase.from('creatives').delete().eq('creative_id', params.get('creative_id'));
-    res.writeHead(302, { Location: '/api/admin/campaigns' });
-    res.end();
-    return;
-  }
-
-  // ---------- 6. ADMIN USER ACTIONS ----------
-  // super_admin (manage_admins) จัดการได้ทุกบัญชี ทุก role
-  // admin (manage_staff) จัดการได้แค่บัญชีที่ role = 'staff' เท่านั้น เปลี่ยน role ไม่ได้เลย
-  if (['admin_create', 'admin_update_role', 'admin_reset_password', 'admin_delete'].includes(actionParam)) {
-    const fullAccess = can(admin.role, 'manage_admins');
-    const staffOnlyAccess = can(admin.role, 'manage_staff');
-
-    if (!fullAccess && !staffOnlyAccess) {
-      res.status(403).send('คุณไม่มีสิทธิ์ทำรายการนี้');
-      return;
-    }
-
-    async function targetIsStaff(username) {
-      const { data } = await supabase.from('admin_users').select('role').eq('username', username).maybeSingle();
-      return data?.role === 'staff';
-    }
-
-    if (actionParam === 'admin_create') {
-      const newRole = params.get('role');
-      if (!fullAccess && newRole !== 'staff') {
-        res.status(403).send('คุณสร้างบัญชีได้แค่ระดับ Staff เท่านั้น');
-        return;
-      }
-      const hash = await bcrypt.hash(params.get('password'), 10);
-      await supabase.from('admin_users').insert({
-        username: params.get('username'),
-        password_hash: hash,
-        role: newRole,
-      });
-    }
-
-    if (actionParam === 'admin_update_role') {
-      // เปลี่ยน role ได้แค่ super_admin เท่านั้น (การเลื่อนขั้นเป็นสิทธิ์สูงสุด)
-      if (!fullAccess) {
-        res.status(403).send('คุณไม่มีสิทธิ์เปลี่ยน role');
-        return;
-      }
-      if (params.get('username') === admin.username) {
-        res.status(400).send('ไม่สามารถเปลี่ยน role ของบัญชีตัวเองได้ ให้ super_admin คนอื่นเปลี่ยนให้');
-        return;
-      }
-      await supabase.from('admin_users').update({ role: params.get('role') }).eq('username', params.get('username'));
-    }
-
-    if (actionParam === 'admin_reset_password') {
-      if (!fullAccess && !(await targetIsStaff(params.get('username')))) {
-        res.status(403).send('คุณรีเซ็ตรหัสผ่านได้แค่บัญชี Staff เท่านั้น');
-        return;
-      }
-      const hash = await bcrypt.hash(params.get('password'), 10);
-      await supabase.from('admin_users').update({ password_hash: hash }).eq('username', params.get('username'));
-    }
-
-    if (actionParam === 'admin_delete') {
-      if (params.get('username') === admin.username) {
-        res.status(400).send('ไม่สามารถลบบัญชีตัวเองได้');
-        return;
-      }
-      if (!fullAccess && !(await targetIsStaff(params.get('username')))) {
-        res.status(403).send('คุณลบได้แค่บัญชี Staff เท่านั้น');
-        return;
-      }
-      await supabase.from('admin_users').delete().eq('username', params.get('username'));
-    }
-
-    res.writeHead(302, { Location: '/api/admin/admins' });
-    res.end();
-    return;
-  }
-
-  // ---------- 6b. OFFICE ACCOUNT MANAGEMENT (super_admin, admin) ----------
-  if (['office_account_create', 'office_account_update', 'office_account_delete'].includes(actionParam)) {
-    if (!requirePermission(res, admin.role, 'manage_offices')) return;
-
-    if (actionParam === 'office_account_create') {
-      const hash = await bcrypt.hash(params.get('password'), 10);
-      await supabase.from('office_accounts').insert({
-        office_name: params.get('office_name'),
-        username: params.get('username'),
-        email: (params.get('email') || '').trim().toLowerCase() || null,
-        password_hash: hash,
-        price_per_week: Number(params.get('price_per_week') || 0),
-        sponsor_slot_count: Number(params.get('sponsor_slot_count') || 18),
-      });
-    }
-
-    if (actionParam === 'office_account_update') {
-      const updates = {
-        office_name: params.get('office_name'),
-        email: (params.get('email') || '').trim().toLowerCase() || null,
-        price_per_week: Number(params.get('price_per_week') || 0),
-        sponsor_slot_count: Number(params.get('sponsor_slot_count') || 18),
-      };
-      const newPassword = params.get('password');
-      if (newPassword) updates.password_hash = await bcrypt.hash(newPassword, 10);
-      await supabase.from('office_accounts').update(updates).eq('id', params.get('office_id'));
-    }
-
-    if (actionParam === 'office_account_delete') {
-      await supabase.from('office_accounts').delete().eq('id', params.get('office_id'));
-    }
-
-    res.writeHead(302, { Location: '/api/admin/office' });
-    res.end();
-    return;
-  }
-
-  // ---------- 6c. เปลี่ยนรหัสผ่านของตัวเอง (ทุก role ทำได้ ไม่ต้องมีสิทธิ์พิเศษ) ----------
-  if (actionParam === 'change_my_password') {
-    const { data: user } = await supabase.from('admin_users').select('password_hash').eq('username', admin.username).single();
-    const valid = user && (await bcrypt.compare(params.get('current_password') || '', user.password_hash));
-
-    if (!valid) {
-      res.status(400).send('รหัสผ่านปัจจุบันไม่ถูกต้อง');
-      return;
-    }
-
-    const hash = await bcrypt.hash(params.get('new_password'), 10);
-    await supabase.from('admin_users').update({ password_hash: hash }).eq('username', admin.username);
-    res.writeHead(302, { Location: '/api/admin/account' });
-    res.end();
-    return;
-  }
-
-  // ---------- 7. MEMBER ACTIONS ----------
-  if (actionParam === 'member_adjust') {
-    if (!requirePermission(res, admin.role, 'edit_member')) return;
-    const memberId = params.get('member_id');
-    const tierScoreDelta = Number(params.get('tier_score_delta') || 0);
-    const pointsDelta = Number(params.get('points_delta') || 0);
-    const note = params.get('note') || '';
-
-    if (tierScoreDelta !== 0 || pointsDelta !== 0) {
-      await supabase.from('points_ledger').insert({
-        member_id: memberId,
-        creative_id: null,
-        tier_score: tierScoreDelta,
-        reward_points: pointsDelta,
-        reason: `admin_adjust:${admin.username}${note ? ' - ' + note : ''}`,
-      });
-    }
-    res.writeHead(302, { Location: `/api/admin/members?detail=${memberId}` });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'member_delete') {
-    if (!requirePermission(res, admin.role, 'delete_member')) return;
-    if (params.get('confirm') !== 'yes') {
-      res.status(400).send('ต้องยืนยันการลบก่อน');
-      return;
-    }
-    await supabase.from('members').delete().eq('id', params.get('member_id'));
-    res.writeHead(302, { Location: '/api/admin/members' });
-    res.end();
-    return;
-  }
-
-  // ---------- 8. OFFICE AREA ACTIONS (admin/staff แก้ของ office ไหนก็ได้) ----------
-  if (actionParam === 'office_get_upload_url') {
-    const officeAccountId = req.query.office;
-    const slot = Number(req.query.slot);
-    try {
-      const target = await createUploadTarget(officeAccountId, slot, params.get('file_name') || 'file');
-      res.setHeader('Content-Type', 'application/json');
-      res.status(200).send(JSON.stringify(target));
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-    return;
-  }
-
-  if (actionParam === 'office_save_content') {
-    const officeAccountId = req.query.office;
-    const slot = Number(req.query.slot);
-    try {
-      await saveSlotContent({
-        officeAccountId,
-        slotNumber: slot,
-        fileName: params.get('file_name'),
-        filePath: params.get('file_path'),
-        fileType: params.get('file_type'),
-        displayAt: params.get('display_at') ? new Date(params.get('display_at')).toISOString() : null,
-        editorLabel: `${admin.username} (${admin.role})`,
-      });
-      res.status(200).send('ok');
-    } catch (err) {
-      res.status(500).send(err.message);
-    }
-    return;
-  }
-
-  // ---------- 9. BOOKING REVIEW (อนุมัติ/ไม่อนุมัติ Content ที่เลือกลง Slot ก่อนขึ้น CMS) ----------
-  if (actionParam === 'booking_review') {
-    const bookingId = params.get('booking_id');
-    const decision = params.get('decision'); // 'approved' หรือ 'rejected'
-    const reason = (params.get('reason') || '').trim();
-
-    if (!['approved', 'rejected'].includes(decision)) {
-      res.status(400).send('decision ไม่ถูกต้อง');
-      return;
-    }
-    if (decision === 'rejected' && !reason) {
-      res.status(400).send('กรุณาใส่เหตุผลที่ไม่อนุมัติ');
-      return;
-    }
-
-    await updateBookingApproval(bookingId, decision, admin.username, reason);
-
-    if (decision === 'rejected') {
-      // เนื้อหาไม่ผ่านอนุมัติ → ยกเลิก Slot นี้ ไม่คืนเงินสด แต่คืนเป็นเครดิตแทน (ใช้จองครั้งต่อไปได้ อายุ 1 ปี)
-      const { data: booking } = await supabase
-        .from('slot_bookings')
-        .select('sponsor_id, price, payment_status')
-        .eq('id', bookingId)
-        .single();
-
-      if (booking && booking.payment_status === 'paid') {
-        await grantSponsorCredit(booking.sponsor_id, booking.price, `rejected_booking:${bookingId}`);
-        await supabase.from('slot_bookings').update({ payment_status: 'refunded' }).eq('id', bookingId);
-        // payment_status = 'refunded' ที่นี่หมายถึง "คืนเป็นเครดิตแล้ว" (ไม่ใช่คืนเงินสดจริง) — Slot จะว่างกลับมาให้จองใหม่ได้ทันที
-      }
-    }
-
-    res.writeHead(302, { Location: '/api/admin/sponsors' });
-    res.end();
-    return;
-  }
-
-  // ---------- 9b. เปลี่ยน Content ของ Booking แทน Sponsor (ตามที่แจ้งผ่านแชท) ----------
-  if (actionParam === 'admin_update_booking_content') {
-    const bookingId = params.get('booking_id');
-    const sponsorId = params.get('sponsor_id');
-    const contentId = params.get('sponsor_content_id');
-    try {
-      await adminUpdateBookingContent(bookingId, sponsorId, contentId, `${admin.username} (${admin.role})`);
-    } catch (err) {
-      res.status(400).send(err.message);
-      return;
-    }
-    res.writeHead(302, { Location: `/api/admin/sponsors?sponsor_id=${sponsorId}` });
-    res.end();
-    return;
-  }
-
-  // ---------- แชท (Admin ตอบทั้ง Sponsor และ Office) ----------
-  if (actionParam === 'chat_send') {
-    const threadType = params.get('thread_type');
-    const threadId = params.get('thread_id');
-    try {
-      await sendMessage({
-        threadType,
-        threadId,
-        senderType: 'admin',
-        senderLabel: admin.username,
-        message: params.get('message'),
-      });
-    } catch (err) {
-      res.status(400).send(err.message);
-      return;
-    }
-    res.status(200).send('ok');
-    return;
-  }
-
-  // ---------- 10. BOOKING PAYMENT CONFIRMATION (manual — เผื่อระบบชำระเงินอัตโนมัติในอนาคต) ----------
-  if (actionParam === 'booking_mark_paid') {
-    await supabase
-      .from('slot_bookings')
-      .update({ payment_status: 'paid', payment_method: 'manual' })
-      .eq('id', params.get('booking_id'));
-    res.writeHead(302, { Location: '/api/admin/sponsors' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'booking_cancel') {
-    await supabase.from('slot_bookings').delete().eq('id', params.get('booking_id'));
-    res.writeHead(302, { Location: '/api/admin/sponsors' });
-    res.end();
-    return;
-  }
-
-  // ---------- 11. SPONSOR ACCOUNT MANAGEMENT (super_admin เท่านั้น) ----------
-  if (actionParam === 'sponsor_account_update') {
-    if (!requirePermission(res, admin.role, 'manage_sponsor_accounts')) return;
-
-    const updates = {
-      company_name: params.get('company_name'),
-      tax_id: params.get('tax_id') || null,
-      address: params.get('address') || null,
-      contact_name: params.get('contact_name') || null,
-      contact_phone: params.get('contact_phone') || null,
-      business_type: params.get('business_type') || null,
-      email: (params.get('email') || '').trim().toLowerCase(),
-    };
-    const newPassword = params.get('password');
-    if (newPassword) updates.password_hash = await bcrypt.hash(newPassword, 10);
-
-    await supabase.from('sponsors').update(updates).eq('id', params.get('sponsor_id'));
-    res.writeHead(302, { Location: '/api/admin/sponsors' });
-    res.end();
-    return;
-  }
-
-  if (actionParam === 'sponsor_account_delete') {
-    if (!requirePermission(res, admin.role, 'manage_sponsor_accounts')) return;
-    await supabase.from('sponsors').delete().eq('id', params.get('sponsor_id'));
-    res.writeHead(302, { Location: '/api/admin/sponsors' });
-    res.end();
-    return;
-  }
-
-  res.status(400).send('ไม่รู้จัก action นี้');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.status(200).send(renderLayout(page, admin, content));
 }
 
-function renderLoginPage(error) {
+// ---------- Dashboard tab ----------
+async function renderDashboardTab(filterCampaigns) {
+  const [scanLogsRes, membersRes, redemptionsRes, creativesRes] = await Promise.all([
+    supabase.from('scan_logs').select('creative_id, scanned_at'),
+    supabase.from('members').select('id'),
+    supabase
+      .from('redemptions')
+      .select('id, redemption_code, points_spent, status, shipping_status, created_at, recipient_name, recipient_phone, recipient_address, rewards(name), members(display_name, line_user_id)')
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase.from('creatives').select('creative_id').order('creative_id'),
+  ]);
+
+  const scanLogs = scanLogsRes.data || [];
+  const totalMembers = (membersRes.data || []).length;
+  const redemptions = redemptionsRes.data || [];
+  const creativeIds = (creativesRes.data || []).map((c) => c.creative_id);
+
+  // ขอบเขตช่วงเวลา: วันนี้ (เที่ยงคืน), สัปดาห์นี้ (จันทร์), เดือนนี้ (วันที่ 1)
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayOfWeek = (now.getDay() + 6) % 7; // จันทร์ = 0
+  const weekStart = new Date(todayStart);
+  weekStart.setDate(todayStart.getDate() - dayOfWeek);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // สรุปยอดสแกนแยกตาม creative x ช่วงเวลา (วันนี้/สัปดาห์นี้/เดือนนี้/ทั้งหมด — เป็นยอดสะสม ไม่ใช่แยกกันเป๊ะๆ)
+  const statsByCreative = {};
+  for (const id of creativeIds) statsByCreative[id] = { today: 0, week: 0, month: 0, all: 0 };
+  for (const row of scanLogs) {
+    if (!statsByCreative[row.creative_id]) statsByCreative[row.creative_id] = { today: 0, week: 0, month: 0, all: 0 };
+    const s = statsByCreative[row.creative_id];
+    const scannedAt = new Date(row.scanned_at);
+    s.all++;
+    if (scannedAt >= monthStart) s.month++;
+    if (scannedAt >= weekStart) s.week++;
+    if (scannedAt >= todayStart) s.today++;
+  }
+  const scansToday = Object.values(statsByCreative).reduce((sum, s) => sum + s.today, 0);
+
+  const scansByCreative = {};
+  for (const row of scanLogs) scansByCreative[row.creative_id] = (scansByCreative[row.creative_id] || 0) + 1;
+
+  const notShippedCount = redemptions.filter((r) => r.status === 'used' && r.shipping_status === 'not_shipped').length;
+
+  const chartLabels = Object.keys(scansByCreative);
+  const chartValues = Object.values(scansByCreative);
+
+  // ---------- ส่วนเปรียบเทียบหลาย Campaign พร้อมกัน (เลือกได้จาก checkbox) ----------
+  const selected = filterCampaigns.filter((id) => creativeIds.includes(id));
+  let comparisonHtml = '';
+  let trendChartScript = '';
+
+  if (selected.length > 0) {
+    // ยอดพีค: วันไหนสแกนเยอะสุดของแต่ละ Campaign ที่เลือก
+    const dailyCountByCreative = {}; // { creative_id: { 'YYYY-MM-DD': count } }
+    for (const row of scanLogs) {
+      if (!selected.includes(row.creative_id)) continue;
+      const dateKey = new Date(row.scanned_at).toLocaleDateString('sv-SE'); // YYYY-MM-DD
+      if (!dailyCountByCreative[row.creative_id]) dailyCountByCreative[row.creative_id] = {};
+      dailyCountByCreative[row.creative_id][dateKey] = (dailyCountByCreative[row.creative_id][dateKey] || 0) + 1;
+    }
+
+    const peakRows = selected
+      .map((id) => {
+        const days = dailyCountByCreative[id] || {};
+        let peakDate = '-';
+        let peakCount = 0;
+        for (const [date, count] of Object.entries(days)) {
+          if (count > peakCount) {
+            peakCount = count;
+            peakDate = date;
+          }
+        }
+        const total = scansByCreative[id] || 0;
+        return `
+          <tr>
+            <td>${id}</td>
+            <td style="text-align:right; font-weight:700;">${total.toLocaleString()}</td>
+            <td style="text-align:right;">${peakCount.toLocaleString()}</td>
+            <td>${peakDate !== '-' ? new Date(peakDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}</td>
+          </tr>`;
+      })
+      .join('');
+
+    // แนวโน้มรายสัปดาห์ ย้อนหลัง 8 สัปดาห์ (นับจากสัปดาห์นี้ถอยไป)
+    const WEEKS_TO_SHOW = 8;
+    const weekBuckets = [];
+    for (let i = WEEKS_TO_SHOW - 1; i >= 0; i--) {
+      const start = new Date(weekStart);
+      start.setDate(weekStart.getDate() - i * 7);
+      weekBuckets.push(start);
+    }
+    const weekLabels = weekBuckets.map((d) => d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }));
+
+    const weeklySeriesByCreative = {};
+    for (const id of selected) weeklySeriesByCreative[id] = new Array(WEEKS_TO_SHOW).fill(0);
+    for (const row of scanLogs) {
+      if (!selected.includes(row.creative_id)) continue;
+      const scannedAt = new Date(row.scanned_at);
+      for (let i = 0; i < WEEKS_TO_SHOW; i++) {
+        const bucketStart = weekBuckets[i];
+        const bucketEnd = new Date(bucketStart);
+        bucketEnd.setDate(bucketStart.getDate() + 7);
+        if (scannedAt >= bucketStart && scannedAt < bucketEnd) {
+          weeklySeriesByCreative[row.creative_id][i]++;
+          break;
+        }
+      }
+    }
+
+    const palette = ['#2a78d6', '#e76f51', '#06c755', '#d4a017', '#8b5cf6', '#0891b2', '#db2777', '#65a30d'];
+    const trendDatasets = selected.map((id, i) => ({
+      label: id,
+      data: weeklySeriesByCreative[id],
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '22',
+      tension: 0.3,
+      fill: false,
+    }));
+
+    comparisonHtml = `
+      <div class="section">
+        <h2>เปรียบเทียบ ${selected.length} Campaign ที่เลือก</h2>
+        <table>
+          <tr><th>Campaign</th><th style="text-align:right;">สแกนทั้งหมด</th><th style="text-align:right;">ยอดสูงสุดใน 1 วัน</th><th>วันที่ทำยอดสูงสุด</th></tr>
+          ${peakRows}
+        </table>
+      </div>
+      <div class="section">
+        <h2>แนวโน้มรายสัปดาห์ (ย้อนหลัง ${WEEKS_TO_SHOW} สัปดาห์)</h2>
+        <div style="position:relative; height:280px;"><canvas id="trendChart"></canvas></div>
+      </div>`;
+
+    trendChartScript = `
+      new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: { labels: ${JSON.stringify(weekLabels)}, datasets: ${JSON.stringify(trendDatasets)} },
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false } }
+      });`;
+  }
+
+  const campaignCheckboxes = creativeIds
+    .map(
+      (id) =>
+        `<label style="display:inline-flex; align-items:center; gap:4px; margin:4px 12px 4px 0; font-size:13px;">
+          <input type="checkbox" name="campaigns" value="${id}" ${selected.includes(id) ? 'checked' : ''} /> ${id}
+        </label>`
+    )
+    .join('');
+
+  const periodRows = Object.entries(statsByCreative)
+    .sort((a, b) => b[1].all - a[1].all)
+    .map(
+      ([id, s]) => `
+        <tr>
+          <td>${id}</td>
+          <td style="text-align:right;">${s.today.toLocaleString()}</td>
+          <td style="text-align:right;">${s.week.toLocaleString()}</td>
+          <td style="text-align:right;">${s.month.toLocaleString()}</td>
+          <td style="text-align:right; font-weight:700;">${s.all.toLocaleString()}</td>
+        </tr>`
+    )
+    .join('');
+
+  const redemptionRows = redemptions
+    .map((r) => {
+      const isPending = r.status === 'pending';
+      const shippingInfo = r.recipient_name
+        ? `<div>${r.recipient_name}</div><div class="hint">${r.recipient_phone || ''}</div><div class="hint">${r.recipient_address || ''}</div>`
+        : '<span class="muted">-</span>';
+      const shipToggle =
+        r.status === 'used'
+          ? `<form method="POST" action="/api/admin/action?action=redemption_ship_status" style="display:inline;">
+               <input type="hidden" name="redemption_id" value="${r.id}" />
+               <select name="shipping_status" class="table-input" style="width:auto; display:inline-block;" onchange="this.form.submit()">
+                 <option value="not_shipped" ${r.shipping_status !== 'shipped' ? 'selected' : ''}>ยังไม่จัดส่ง</option>
+                 <option value="shipped" ${r.shipping_status === 'shipped' ? 'selected' : ''}>จัดส่งแล้ว</option>
+               </select>
+             </form>`
+          : '-';
+      return `
+        <tr>
+          <td>${new Date(r.created_at).toLocaleString('th-TH')}</td>
+          <td>${r.members?.display_name || r.members?.line_user_id || '-'}</td>
+          <td>${r.rewards?.name || '-'}</td>
+          <td style="text-align:right;">${r.points_spent}</td>
+          <td style="max-width:200px;">${shippingInfo}</td>
+          <td style="text-align:center;">
+            ${
+              isPending
+                ? `<form method="POST" action="/api/admin/action?action=mark_used" style="display:inline;">
+                     <input type="hidden" name="code" value="${r.redemption_code}" />
+                     <button class="btn-small">ยืนยันใช้แล้ว</button>
+                   </form>`
+                : shipToggle
+            }
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="grid">
+      <div class="card"><p class="label">สแกนทั้งหมด</p><p class="value">${scanLogs.length.toLocaleString()}</p></div>
+      <div class="card"><p class="label">สแกนวันนี้</p><p class="value">${scansToday.toLocaleString()}</p></div>
+      <div class="card"><p class="label">สมาชิกทั้งหมด</p><p class="value">${totalMembers.toLocaleString()}</p></div>
+      <div class="card"><p class="label">รอจัดส่ง</p><p class="value" style="color:${notShippedCount > 0 ? '#e76f51' : '#1b1f27'};">${notShippedCount}</p></div>
+    </div>
+
+    <div class="section">
+      <h2>เปรียบเทียบยอดสแกนแยกตาม Campaign</h2>
+      <div style="position:relative; height:260px;"><canvas id="scanChart"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>เลือก Campaign เพื่อเปรียบเทียบ (เลือกได้หลายอัน)</h2>
+      <p class="hint">เหมาะสำหรับเทียบหลายสาขา/สถานที่ของแบรนด์เดียวกัน</p>
+      <form method="GET" action="/api/admin/dashboard">
+        <div>${campaignCheckboxes || '<span class="muted">ยังไม่มี Campaign</span>'}</div>
+        <button class="btn-small" type="submit" style="margin-top:12px;">เปรียบเทียบ</button>
+        ${selected.length ? '<a href="/api/admin/dashboard" class="clear-filter">ล้างการเลือก</a>' : ''}
+      </form>
+    </div>
+
+    ${comparisonHtml}
+
+    <div class="section">
+      <h2>ยอดสแกนแยกตาม Campaign — วันนี้ / สัปดาห์นี้ / เดือนนี้ / ทั้งหมด</h2>
+      <table>
+        <tr><th>Campaign</th><th style="text-align:right;">วันนี้</th><th style="text-align:right;">สัปดาห์นี้</th><th style="text-align:right;">เดือนนี้</th><th style="text-align:right;">ทั้งหมด</th></tr>
+        ${periodRows || '<tr><td colspan="5" class="muted">ยังไม่มีข้อมูล</td></tr>'}
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>ประวัติการแลกของรางวัล / สถานะจัดส่ง (50 รายการล่าสุด)</h2>
+      <table>
+        <tr><th>วันที่</th><th>สมาชิก</th><th>ของรางวัล</th><th style="text-align:right;">Point</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะ</th></tr>
+        ${redemptionRows || '<tr><td colspan="6" class="muted">ยังไม่มีการแลก</td></tr>'}
+      </table>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+    <script>
+      new Chart(document.getElementById('scanChart'), {
+        type: 'bar',
+        data: {
+          labels: ${JSON.stringify(chartLabels)},
+          datasets: [{ label: 'จำนวนสแกน', data: ${JSON.stringify(chartValues)}, backgroundColor: '#2a78d6', borderRadius: 4 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+      ${trendChartScript}
+    </script>`;
+}
+
+// ---------- Members tab ----------
+async function renderMembersTab(admin, tierFilter, detailMemberId) {
+  if (detailMemberId) return renderMemberDetail(admin, detailMemberId);
+
+  const yearStart = getCurrentYearStart();
+  const [membersRes, ledgerRes, redemptionsRes] = await Promise.all([
+    supabase.from('members').select('id, line_user_id, display_name, created_at'),
+    supabase.from('points_ledger').select('member_id, tier_score, reward_points, created_at'),
+    supabase.from('redemptions').select('member_id, points_spent, created_at'),
+  ]);
+
+  const members = membersRes.data || [];
+  const ledger = ledgerRes.data || [];
+  const redemptions = redemptionsRes.data || [];
+
+  const spentThisYearByMember = {};
+  for (const r of redemptions) {
+    if (new Date(r.created_at) >= new Date(yearStart)) {
+      spentThisYearByMember[r.member_id] = (spentThisYearByMember[r.member_id] || 0) + r.points_spent;
+    }
+  }
+
+  const membersWithStats = members.map((m) => {
+    const { start, end } = getTierEvaluationPeriod(m.created_at);
+    const startDate = new Date(start);
+    const endDate = end ? new Date(end) : null;
+    let tierScore = 0;
+    let pointsEarnedThisYear = 0;
+    for (const row of ledger) {
+      if (row.member_id !== m.id) continue;
+      const rowDate = new Date(row.created_at);
+      if (rowDate >= startDate && (!endDate || rowDate < endDate)) tierScore += row.tier_score;
+      if (rowDate >= new Date(yearStart)) pointsEarnedThisYear += row.reward_points;
+    }
+    const spendableBalance = pointsEarnedThisYear - (spentThisYearByMember[m.id] || 0);
+    return { ...m, tierScore, spendableBalance, tier: getTier(tierScore).current };
+  });
+
+  const tierCounts = Object.fromEntries(TIERS.map((t) => [t.name, 0]));
+  for (const m of membersWithStats) tierCounts[m.tier.name]++;
+
+  const filtered = tierFilter ? membersWithStats.filter((m) => m.tier.name === tierFilter) : membersWithStats;
+
+  const tierPills = TIERS.map((t) => {
+    const isActive = tierFilter === t.name;
+    return `
+      <a href="/api/admin/members?tier=${encodeURIComponent(t.name)}" class="stat-pill" style="border-color:${t.color}; ${isActive ? `background:${t.color}1a;` : ''}">
+        <span style="color:${t.color};">${t.name}</span>
+        <strong>${tierCounts[t.name] || 0}</strong>
+      </a>`;
+  }).join('');
+
+  const clearFilter = tierFilter ? `<a href="/api/admin/members" class="clear-filter">ล้างฟิลเตอร์</a>` : '';
+
+  const rows = filtered
+    .sort((a, b) => b.tierScore - a.tierScore)
+    .map(
+      (m) => `
+        <tr>
+          <td><a href="/api/admin/members?detail=${m.id}" class="link">${m.display_name || m.line_user_id}</a></td>
+          <td><span class="tier-tag" style="background:${m.tier.color};">${m.tier.name}</span></td>
+          <td style="text-align:right;">${m.tierScore.toLocaleString()}</td>
+          <td style="text-align:right;">${m.spendableBalance.toLocaleString()}</td>
+          <td>${new Date(m.created_at).toLocaleDateString('th-TH')}</td>
+        </tr>`
+    )
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>สมาชิกแยกตาม Tier</h2>
+      <p class="hint">Tier ปีนี้ล็อกจากยอด Tier Score ของปีที่แล้ว — กดป้ายเพื่อกรอง</p>
+      <div>${tierPills}${clearFilter}</div>
+    </div>
+    <div class="section">
+      <h2>รายชื่อสมาชิก${tierFilter ? ` — Tier ${tierFilter}` : ''}</h2>
+      <p class="hint">${filtered.length.toLocaleString()} คน — คลิกชื่อเพื่อดูรายละเอียด</p>
+      <table>
+        <tr><th>ชื่อ</th><th>Tier</th><th style="text-align:right;">Tier Score</th><th style="text-align:right;">Point คงเหลือ</th><th>สมัครเมื่อ</th></tr>
+        ${rows || '<tr><td colspan="5" class="muted">ไม่มีสมาชิกในกลุ่มนี้</td></tr>'}
+      </table>
+    </div>`;
+}
+
+// ---------- Member detail (ประวัติ engagement + redemption + form แก้ไข/ลบ) ----------
+async function renderMemberDetail(admin, memberId) {
+  const [memberRes, ledgerRes, redemptionsRes, addressesRes] = await Promise.all([
+    supabase.from('members').select('id, line_user_id, display_name, created_at').eq('id', memberId).single(),
+    supabase.from('points_ledger').select('creative_id, tier_score, reward_points, reason, created_at').eq('member_id', memberId).order('created_at', { ascending: false }),
+    supabase.from('redemptions').select('id, points_spent, status, shipping_status, created_at, used_at, recipient_name, recipient_phone, recipient_address, rewards(name)').eq('member_id', memberId).order('created_at', { ascending: false }),
+    supabase.from('member_addresses').select('recipient_name, recipient_phone, recipient_address, created_at').eq('member_id', memberId).order('created_at', { ascending: false }),
+  ]);
+
+  const member = memberRes.data;
+  if (!member) return `<div class="section"><p>ไม่พบสมาชิกนี้</p></div>`;
+
+  const ledger = ledgerRes.data || [];
+  const redemptions = redemptionsRes.data || [];
+  const addresses = addressesRes.data || [];
+  const tierScore = ledger.reduce((s, r) => s + r.tier_score, 0);
+  const { current } = getTier(tierScore);
+
+  const engagementRows = ledger
+    .map((r) => {
+      const isAdjust = r.reason?.startsWith('admin_adjust');
+      return `
+        <tr>
+          <td>${new Date(r.created_at).toLocaleString('th-TH')}</td>
+          <td>${r.creative_id || (isAdjust ? '(แอดมินปรับ)' : '-')}</td>
+          <td style="text-align:right;">${r.tier_score >= 0 ? '+' : ''}${r.tier_score}</td>
+          <td style="text-align:right;">${r.reward_points >= 0 ? '+' : ''}${r.reward_points}</td>
+        </tr>`;
+    })
+    .join('');
+
+  const redemptionRows = redemptions
+    .map((r) => {
+      const shipBadge =
+        r.status === 'used'
+          ? `<form method="POST" action="/api/admin/action?action=redemption_ship_status" style="display:inline;">
+               <input type="hidden" name="redemption_id" value="${r.id}" />
+               <input type="hidden" name="back_to" value="/api/admin/members?detail=${memberId}" />
+               <select name="shipping_status" class="table-input" style="width:auto; display:inline-block;" onchange="this.form.submit()">
+                 <option value="not_shipped" ${r.shipping_status !== 'shipped' ? 'selected' : ''}>ยังไม่จัดส่ง</option>
+                 <option value="shipped" ${r.shipping_status === 'shipped' ? 'selected' : ''}>จัดส่งแล้ว</option>
+               </select>
+             </form>`
+          : 'รอใช้';
+      return `
+        <tr>
+          <td>${new Date(r.created_at).toLocaleString('th-TH')}</td>
+          <td>${r.rewards?.name || '-'}</td>
+          <td style="text-align:right;">${r.points_spent}</td>
+          <td>${r.recipient_name ? `${r.recipient_name}<br/><span class="hint">${r.recipient_phone || ''}</span><br/><span class="hint">${r.recipient_address || ''}</span>` : '-'}</td>
+          <td style="text-align:center;">${shipBadge}</td>
+        </tr>`;
+    })
+    .join('');
+
+  const addressRows = addresses
+    .map(
+      (a) => `
+        <tr>
+          <td>${new Date(a.created_at).toLocaleDateString('th-TH')}</td>
+          <td>${a.recipient_name}</td>
+          <td>${a.recipient_phone}</td>
+          <td>${a.recipient_address}</td>
+        </tr>`
+    )
+    .join('');
+
+  const canEditMember = can(admin.role, 'edit_member');
+  const canDeleteMember = can(admin.role, 'delete_member');
+
+  const adjustForm = canEditMember
+    ? `
+    <div class="section">
+      <h2>ปรับ Tier Score / Point ด้วยมือ</h2>
+      <form method="POST" action="/api/admin/action?action=member_adjust" class="stack-form">
+        <input type="hidden" name="member_id" value="${member.id}" />
+        <label>เพิ่ม/ลด Tier Score (ใส่ค่าติดลบเพื่อหัก)</label>
+        <input type="number" name="tier_score_delta" value="0" />
+        <label>เพิ่ม/ลด Point (ใส่ค่าติดลบเพื่อหัก)</label>
+        <input type="number" name="points_delta" value="0" />
+        <label>หมายเหตุ (ไม่บังคับ)</label>
+        <input type="text" name="note" placeholder="เช่น ชดเชยระบบ error" />
+        <button type="submit" class="btn-primary">บันทึก</button>
+      </form>
+    </div>`
+    : '';
+
+  const deleteForm = canDeleteMember
+    ? `
+    <div class="section">
+      <h2 style="color:#e76f51;">ลบสมาชิกนี้</h2>
+      <p class="hint">การลบไม่สามารถย้อนกลับได้ ประวัติทั้งหมดของสมาชิกคนนี้จะหายไป</p>
+      <form method="POST" action="/api/admin/action?action=member_delete" onsubmit="return confirm('ยืนยันลบสมาชิกนี้ถาวร? ข้อมูลทั้งหมดจะกู้คืนไม่ได้')">
+        <input type="hidden" name="member_id" value="${member.id}" />
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin:8px 0;">
+          <input type="checkbox" name="confirm" value="yes" required />
+          ฉันเข้าใจว่าการลบนี้ถาวรและไม่สามารถกู้คืนได้
+        </label>
+        <button type="submit" class="btn-danger">ลบสมาชิกถาวร</button>
+      </form>
+    </div>`
+    : '';
+
+  return `
+    <a href="/api/admin/members" class="link">&larr; กลับไปรายชื่อสมาชิก</a>
+    <div class="section" style="margin-top:12px;">
+      <h2>${member.display_name || member.line_user_id}</h2>
+      <span class="tier-tag" style="background:${current.color};">${current.name}</span>
+      <p class="hint" style="margin-top:8px;">สมัครเมื่อ ${new Date(member.created_at).toLocaleDateString('th-TH')}</p>
+    </div>
+
+    <div class="section">
+      <h2>ประวัติ Engagement (Campaign ที่เคย engage)</h2>
+      <table>
+        <tr><th>วันที่</th><th>Campaign</th><th style="text-align:right;">Tier Score</th><th style="text-align:right;">Point</th></tr>
+        ${engagementRows || '<tr><td colspan="4" class="muted">ยังไม่มีประวัติ</td></tr>'}
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>ประวัติการแลก Reward</h2>
+      <table>
+        <tr><th>วันที่</th><th>ของรางวัล</th><th style="text-align:right;">Point</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะจัดส่ง</th></tr>
+        ${redemptionRows || '<tr><td colspan="5" class="muted">ยังไม่เคยแลก</td></tr>'}
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>ที่อยู่ที่เคยใช้จัดส่ง</h2>
+      <table>
+        <tr><th>วันที่</th><th>ชื่อ</th><th>เบอร์โทร</th><th>ที่อยู่</th></tr>
+        ${addressRows || '<tr><td colspan="4" class="muted">ยังไม่มีที่อยู่บันทึกไว้</td></tr>'}
+      </table>
+    </div>
+
+    ${adjustForm}
+    ${deleteForm}`;
+}
+
+// ---------- Rewards tab ----------
+async function renderRewardsTab(admin) {
+  const { data: rewards } = await supabase.from('rewards').select('id, name, points_cost, active').order('id');
+  const canEdit = can(admin.role, 'edit_reward');
+  const canDelete = can(admin.role, 'delete_reward');
+
+  const rows = (rewards || [])
+    .map((r) => {
+      const editableCells = canEdit
+        ? `
+          <td>
+            <form method="POST" action="/api/admin/action?action=reward_update" class="inline-form">
+              <input type="hidden" name="id" value="${r.id}" />
+              <input type="text" name="name" value="${r.name}" class="table-input" />
+          </td>
+          <td><input type="number" name="points_cost" value="${r.points_cost}" class="table-input small" /></td>
+          <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>`
+        : `<td>${r.name}</td><td>${r.points_cost}</td><td></td>`;
+
+      const deleteCell = canDelete
+        ? `<td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=reward_delete" onsubmit="return confirm('ลบของรางวัลนี้?')" style="display:inline;">
+              <input type="hidden" name="id" value="${r.id}" />
+              <button class="btn-small btn-danger">ลบ</button>
+            </form>
+          </td>`
+        : `<td></td>`;
+
+      return `
+        <tr>
+          ${editableCells}
+          <td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=reward_toggle" class="inline-form">
+              <input type="hidden" name="id" value="${r.id}" />
+              <button class="btn-small ${r.active ? '' : 'btn-muted'}">${r.active ? 'เปิดใช้อยู่' : 'ปิดใช้อยู่'}</button>
+            </form>
+          </td>
+          ${deleteCell}
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>เพิ่มของรางวัลใหม่</h2>
+      <form method="POST" action="/api/admin/action?action=reward_create" class="stack-form">
+        <label>ชื่อของรางวัล</label>
+        <input type="text" name="name" required />
+        <label>ใช้กี่ Point</label>
+        <input type="number" name="points_cost" required min="1" />
+        <button type="submit" class="btn-primary">เพิ่มของรางวัล</button>
+      </form>
+    </div>
+    <div class="section">
+      <h2>รายการของรางวัลทั้งหมด</h2>
+      ${!canEdit ? '<p class="hint">คุณดูและเปิด/ปิดใช้งานได้ แต่แก้ไข/ลบไม่ได้</p>' : ''}
+      <table>
+        <tr><th>ชื่อ</th><th>Point</th><th></th><th style="text-align:center;">สถานะ</th><th></th></tr>
+        ${rows || '<tr><td colspan="5" class="muted">ยังไม่มีของรางวัล</td></tr>'}
+      </table>
+    </div>`;
+}
+
+// ---------- Campaigns tab ----------
+async function renderCampaignsTab(admin, req) {
+  const { data: creatives } = await supabase.from('creatives').select('creative_id, destination_url, active').order('creative_id');
+  const canEdit = can(admin.role, 'edit_campaign');
+  const canDelete = can(admin.role, 'delete_campaign');
+
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const baseUrl = `${proto}://${req.headers.host}`;
+
+  const rows = (creatives || [])
+    .map((c) => {
+      const qrLink = `${baseUrl}/api/qr/${c.creative_id}`;
+      const editableCells = canEdit
+        ? `
+          <td>
+            <form method="POST" action="/api/admin/action?action=campaign_update" class="inline-form">
+              <input type="hidden" name="creative_id" value="${c.creative_id}" />
+              <input type="text" name="destination_url" value="${c.destination_url}" class="table-input" />
+          </td>
+          <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>`
+        : `<td>${c.destination_url}</td><td></td>`;
+
+      const deleteCell = canDelete
+        ? `<td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=campaign_delete" onsubmit="return confirm('ลบ Campaign นี้?')" style="display:inline;">
+              <input type="hidden" name="creative_id" value="${c.creative_id}" />
+              <button class="btn-small btn-danger">ลบ</button>
+            </form>
+          </td>`
+        : `<td></td>`;
+
+      return `
+        <tr>
+          <td style="font-family:monospace;">${c.creative_id}</td>
+          <td>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="text" readonly value="${qrLink}" class="table-input" style="font-size:12px;" onclick="this.select()" />
+              <button type="button" class="btn-small" onclick="navigator.clipboard.writeText('${qrLink}'); this.textContent='ก็อปแล้ว'; setTimeout(()=>this.textContent='ก็อปลิงก์', 1500);">ก็อปลิงก์</button>
+            </div>
+          </td>
+          ${editableCells}
+          <td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=campaign_toggle" class="inline-form">
+              <input type="hidden" name="creative_id" value="${c.creative_id}" />
+              <button class="btn-small ${c.active ? '' : 'btn-muted'}">${c.active ? 'เปิดใช้อยู่' : 'ปิดใช้อยู่'}</button>
+            </form>
+          </td>
+          ${deleteCell}
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>เพิ่ม Campaign ใหม่</h2>
+      <form method="POST" action="/api/admin/action?action=campaign_create" class="stack-form">
+        <label>Campaign ID (ใช้ในลิงก์ QR เช่น brandA-video)</label>
+        <input type="text" name="creative_id" required pattern="[a-zA-Z0-9\\-_]+" />
+        <label>URL ปลายทาง</label>
+        <input type="url" name="destination_url" required placeholder="https://..." />
+        <button type="submit" class="btn-primary">เพิ่ม Campaign</button>
+      </form>
+    </div>
+    <div class="section">
+      <h2>Campaign ทั้งหมด</h2>
+      ${!canEdit ? '<p class="hint">คุณดูและเปิด/ปิดใช้งานได้ แต่แก้ไข/ลบไม่ได้</p>' : ''}
+      <table>
+        <tr><th>Campaign ID</th><th>ลิงก์ QR</th><th>URL ปลายทาง</th><th></th><th style="text-align:center;">สถานะ</th><th></th></tr>
+        ${rows || '<tr><td colspan="6" class="muted">ยังไม่มี Campaign</td></tr>'}
+      </table>
+    </div>`;
+}
+
+// ---------- Admins tab (super_admin เท่านั้น) ----------
+async function renderAdminsTab(admin) {
+  const fullAccess = can(admin.role, 'manage_admins'); // super_admin: จัดการได้ทุกคน ทุก role
+  const { data: allAdmins } = await supabase.from('admin_users').select('username, role, created_at').order('created_at');
+
+  // ถ้าไม่ใช่ full access (คือเป็น 'admin') เห็นแค่บัญชี staff เท่านั้น ไม่เห็น/แตะบัญชี admin หรือ super_admin คนอื่น
+  const visibleAdmins = fullAccess ? allAdmins || [] : (allAdmins || []).filter((a) => a.role === 'staff');
+
+  const roleOptions = (selected) =>
+    ['super_admin', 'admin', 'staff']
+      .map((r) => `<option value="${r}" ${r === selected ? 'selected' : ''}>${r}</option>`)
+      .join('');
+
+  const rows = visibleAdmins
+    .map((a) => {
+      const isSelf = a.username === admin.username;
+      const roleCell = isSelf
+        ? a.role
+        : fullAccess
+        ? `<form method="POST" action="/api/admin/action?action=admin_update_role" class="inline-form">
+             <input type="hidden" name="username" value="${a.username}" />
+             <select name="role" class="table-input">${roleOptions(a.role)}</select>
+           </td>
+           <td style="text-align:center;"><button class="btn-small">บันทึก</button></form>`
+        : a.role; // admin เห็น role ของ staff ได้ แต่แก้ไม่ได้
+
+      const resetForm = isSelf
+        ? ''
+        : `<form method="POST" action="/api/admin/action?action=admin_reset_password" class="inline-form">
+             <input type="hidden" name="username" value="${a.username}" />
+             <input type="hidden" name="password" value="" />
+             <button type="button" class="btn-small" onclick="const p=prompt('ตั้งรหัสผ่านใหม่ให้ ${a.username}'); if(p){ this.form.password.value=p; this.form.submit(); }">รีเซ็ตรหัสผ่าน</button>
+           </form>`;
+
+      const deleteForm = isSelf
+        ? ''
+        : `<form method="POST" action="/api/admin/action?action=admin_delete" onsubmit="return confirm('ลบบัญชี ${a.username}?')" style="display:inline;">
+             <input type="hidden" name="username" value="${a.username}" />
+             <button class="btn-small btn-danger">ลบ</button>
+           </form>`;
+
+      return `
+        <tr>
+          <td>${a.username}${isSelf ? ' <span class="hint">(คุณ)</span>' : ''}</td>
+          <td>${roleCell}</td>
+          <td>${new Date(a.created_at).toLocaleDateString('th-TH')}</td>
+          <td style="text-align:center;">${resetForm}</td>
+          <td style="text-align:center;">${deleteForm}</td>
+        </tr>`;
+    })
+    .join('');
+
+  const roleSelector = fullAccess
+    ? `
+        <label>Role</label>
+        <select name="role" style="padding:8px; border:1px solid #e5e7eb; border-radius:6px;">
+          <option value="staff">staff</option>
+          <option value="admin">admin</option>
+          <option value="super_admin">super_admin</option>
+        </select>`
+    : `<input type="hidden" name="role" value="staff" />`; // admin สร้างได้แค่ staff เท่านั้น
+
+  return `
+    <div class="section">
+      <h2>เพิ่มบัญชี${fullAccess ? 'แอดมิน/เจ้าหน้าที่' : 'เจ้าหน้าที่ (Staff)'}ใหม่</h2>
+      ${!fullAccess ? '<p class="hint">คุณเพิ่มได้แค่บัญชีระดับ Staff เท่านั้น</p>' : ''}
+      <form method="POST" action="/api/admin/action?action=admin_create" class="stack-form">
+        <label>Username</label>
+        <input type="text" name="username" required />
+        <label>Password</label>
+        <input type="password" name="password" required />
+        ${roleSelector}
+        <button type="submit" class="btn-primary">เพิ่มบัญชี</button>
+      </form>
+    </div>
+    <div class="section">
+      <h2>${fullAccess ? 'บัญชีแอดมินทั้งหมด' : 'บัญชี Staff ทั้งหมด'}</h2>
+      <p class="hint">super_admin: ทำได้ทุกอย่าง | admin: จัดการบัญชี Staff/Office ได้ แตะบัญชี Admin คนอื่นไม่ได้ | staff: สร้าง/เปิดปิด Campaign และ Reward ได้ จัดการบัญชีใครไม่ได้เลย</p>
+      <table>
+        <tr><th>Username</th><th>Role</th><th>สร้างเมื่อ</th><th>รหัสผ่าน</th><th></th></tr>
+        ${rows || '<tr><td colspan="5" class="muted">ไม่มีบัญชี</td></tr>'}
+      </table>
+    </div>`;
+}
+
+// ---------- Office Area tab (admin/staff เข้าดู/แก้ office ไหนก็ได้) ----------
+async function renderOfficeTab(admin, selectedOfficeId) {
+  const canManageOffices = can(admin.role, 'manage_offices');
+  const offices = await listOfficeAccounts();
+
+  const manageSection = canManageOffices ? renderOfficeAccountManagement(offices) : '';
+
+  if (!offices.length) {
+    return manageSection + `<div class="section"><p class="muted">ยังไม่มีบัญชี Office เลย เพิ่มได้จากฟอร์มด้านบน</p></div>`;
+  }
+
+  const activeId = selectedOfficeId || offices[0].id;
+  const officeAccount = await getOfficeAccount(activeId);
+
+  const officeOptions = offices
+    .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} (${o.username})</option>`)
+    .join('');
+
+  const picker = `
+    <div class="section">
+      <h2>เลือก Office</h2>
+      <form method="GET" action="/api/admin/office" style="display:flex; gap:8px; align-items:center;">
+        <select name="office_id" class="table-input" style="max-width:280px;" onchange="this.form.submit()">
+          ${officeOptions}
+        </select>
+      </form>
+    </div>`;
+
+  if (!officeAccount) {
+    return manageSection + picker + `<div class="section"><p class="muted">ไม่พบ Office นี้</p></div>`;
+  }
+
+  const slots = await getSlots(officeAccount.id);
+  const officeContent = renderOfficeAreaContent({
+    officeAccount,
+    slots,
+    canEdit: true,
+    uploadUrlAction: `/api/admin/action?action=office_get_upload_url&office=${officeAccount.id}`,
+    saveAction: `/api/admin/action?action=office_save_content&office=${officeAccount.id}`,
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+  });
+
+  const playStats = await renderPlaybackStats(officeAccount.id);
+
+  return manageSection + picker + officeContent + playStats;
+}
+
+// ยอดรอบการเล่นเนื้อหาจริงบนจอ (ข้อมูลจาก CMS ที่ยิงเข้ามาทาง /api/playback-log)
+async function renderPlaybackStats(officeAccountId) {
+  const { data: logs } = await supabase
+    .from('content_play_logs')
+    .select('slot_number, screen_id, content_label, played_at')
+    .eq('office_account_id', officeAccountId)
+    .order('played_at', { ascending: false })
+    .limit(500);
+
+  const rows = logs || [];
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayOfWeek = (now.getDay() + 6) % 7;
+  const weekStart = new Date(todayStart);
+  weekStart.setDate(todayStart.getDate() - dayOfWeek);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const bySlot = { 1: { today: 0, week: 0, month: 0, all: 0 }, 2: { today: 0, week: 0, month: 0, all: 0 }, 3: { today: 0, week: 0, month: 0, all: 0 } };
+  for (const row of rows) {
+    const slot = bySlot[row.slot_number];
+    if (!slot) continue;
+    const playedAt = new Date(row.played_at);
+    slot.all++;
+    if (playedAt >= monthStart) slot.month++;
+    if (playedAt >= weekStart) slot.week++;
+    if (playedAt >= todayStart) slot.today++;
+  }
+
+  const slotRows = [1, 2, 3]
+    .map(
+      (n) => `
+        <tr>
+          <td>Slot ${n}</td>
+          <td style="text-align:right;">${bySlot[n].today.toLocaleString()}</td>
+          <td style="text-align:right;">${bySlot[n].week.toLocaleString()}</td>
+          <td style="text-align:right;">${bySlot[n].month.toLocaleString()}</td>
+          <td style="text-align:right; font-weight:700;">${bySlot[n].all.toLocaleString()}</td>
+        </tr>`
+    )
+    .join('');
+
+  const recentRows = rows
+    .slice(0, 20)
+    .map(
+      (r) => `
+        <tr>
+          <td>${new Date(r.played_at).toLocaleString('th-TH')}</td>
+          <td>${r.slot_number || '-'}</td>
+          <td>${r.screen_id || '-'}</td>
+          <td>${r.content_label || '-'}</td>
+        </tr>`
+    )
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>ยอดรอบการเล่นเนื้อหาจริงบนจอ (จาก CMS)</h2>
+      <p class="hint">ข้อมูลนี้มาจาก CMS ภายนอกที่ยิง Webhook เข้ามาที่ /api/playback-log — ถ้ายังไม่เชื่อมต่อ CMS ตารางนี้จะว่างเปล่า</p>
+      <table>
+        <tr><th></th><th style="text-align:right;">วันนี้</th><th style="text-align:right;">สัปดาห์นี้</th><th style="text-align:right;">เดือนนี้</th><th style="text-align:right;">ทั้งหมด</th></tr>
+        ${slotRows}
+      </table>
+    </div>
+    <div class="section">
+      <h2>Log ล่าสุด (20 รายการ)</h2>
+      <table>
+        <tr><th>เวลา</th><th>Slot</th><th>Screen ID</th><th>ไฟล์ที่เล่น</th></tr>
+        ${recentRows || '<tr><td colspan="4" class="muted">ยังไม่มีข้อมูล</td></tr>'}
+      </table>
+    </div>`;
+}
+
+// จัดการบัญชี Office (สร้าง/แก้ชื่อ-รหัสผ่าน/ลบ) — super_admin, admin เท่านั้น
+function renderOfficeAccountManagement(offices) {
+  const rows = offices
+    .map(
+      (o) => `
+        <tr>
+          <td>
+            <form method="POST" action="/api/admin/action?action=office_account_update" class="inline-form">
+              <input type="hidden" name="office_id" value="${o.id}" />
+              <input type="text" name="office_name" value="${o.office_name}" class="table-input" />
+          </td>
+          <td>${o.username}</td>
+          <td>
+              <input type="email" name="email" value="${o.email || ''}" placeholder="สำหรับลืมรหัสผ่าน" class="table-input" />
+          </td>
+          <td>
+              <input type="number" name="price_per_week" value="${o.price_per_week || 0}" class="table-input" style="width:100px;" step="0.01" />
+          </td>
+          <td>
+              <input type="number" name="sponsor_slot_count" value="${o.sponsor_slot_count || 18}" class="table-input" style="width:70px;" min="1" />
+          </td>
+          <td>
+              <input type="password" name="password" placeholder="(เว้นว่างถ้าไม่เปลี่ยน)" class="table-input" />
+          </td>
+          <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>
+          <td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=office_account_delete" onsubmit="return confirm('ลบบัญชี Office นี้? Content ทั้ง 3 Slot จะหายไปด้วย')" style="display:inline;">
+              <input type="hidden" name="office_id" value="${o.id}" />
+              <button class="btn-small btn-danger">ลบ</button>
+            </form>
+          </td>
+        </tr>`
+    )
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>เพิ่มบัญชี Office ใหม่</h2>
+      <form method="POST" action="/api/admin/action?action=office_account_create" class="stack-form">
+        <label>ชื่อ Office/สาขา</label>
+        <input type="text" name="office_name" required />
+        <label>Username</label>
+        <input type="text" name="username" required />
+        <label>อีเมล (ใช้สำหรับลืมรหัสผ่าน)</label>
+        <input type="email" name="email" />
+        <label>Password</label>
+        <input type="password" name="password" required />
+        <label>ราคาต่อสัปดาห์ (บาท) — สำหรับให้ Sponsor จองสล็อต</label>
+        <input type="number" name="price_per_week" step="0.01" min="0" value="0" />
+        <label>จำนวนสล็อตสำหรับ Sponsor</label>
+        <input type="number" name="sponsor_slot_count" min="1" value="18" />
+        <button type="submit" class="btn-primary">เพิ่มบัญชี Office</button>
+      </form>
+    </div>
+    <div class="section">
+      <h2>จัดการบัญชี Office ทั้งหมด</h2>
+      <table>
+        <tr><th>ชื่อ Office</th><th>Username</th><th>อีเมล</th><th>ราคา/สัปดาห์</th><th>จำนวนสล็อต</th><th>รีเซ็ตรหัสผ่าน</th><th></th><th></th></tr>
+        ${rows || '<tr><td colspan="8" class="muted">ยังไม่มีบัญชี Office</td></tr>'}
+      </table>
+    </div>`;
+}
+
+// ---------- Sponsors tab: อนุมัติ Content + ยืนยันรับเงินการจอง ----------
+async function renderSponsorsTab(admin, query) {
+  const canManageSponsors = can(admin.role, 'manage_sponsor_accounts');
+
+  const [pendingBookings, allBookingsRes] = await Promise.all([
+    getPendingBookings(),
+    supabase
+      .from('slot_bookings')
+      .select('id, slot_number, week_start, price, payment_status, approval_status, payment_method, payment_reference, payment_slip_path, created_at, sponsors(company_name, sponsor_code), office_accounts(office_name), sponsor_content(file_name)')
+      .order('week_start', { ascending: true })
+      .limit(50),
+  ]);
+
+  const allBookings = allBookingsRes.data || [];
+
+  // ---------- ส่วนที่ 1: การจองที่รอตรวจสอบไฟล์ก่อนขึ้น CMS (ทุก Sponsor) ----------
+  const pendingCards = await Promise.all(
+    pendingBookings.map(async (b) => {
+      const c = b.sponsor_content;
+      const url = c ? await getSignedContentUrl(c.file_path) : null;
+      const preview = !c
+        ? '<p class="muted">ไม่มีไฟล์</p>'
+        : c.file_type === 'video'
+        ? `<video src="${url}" controls style="width:100%; max-height:160px; border-radius:8px;"></video>`
+        : `<img src="${url}" style="width:100%; max-height:160px; object-fit:cover; border-radius:8px;" />`;
+      return `
+        <div class="content-review-card">
+          ${preview}
+          <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${c?.file_name || '-'}</p>
+          <p class="hint">${b.sponsors?.company_name || '-'} (${b.sponsors?.sponsor_code || '-'}) — ${b.office_accounts?.office_name || '-'} Slot ${b.slot_number}</p>
+          <p class="hint">สัปดาห์ ${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <form method="POST" action="/api/admin/action?action=booking_review" style="display:inline;">
+              <input type="hidden" name="booking_id" value="${b.id}" />
+              <input type="hidden" name="decision" value="approved" />
+              <button class="btn-small">อนุมัติ</button>
+            </form>
+            <form method="POST" action="/api/admin/action?action=booking_review" style="display:inline;" onsubmit="return fillReason(this)">
+              <input type="hidden" name="booking_id" value="${b.id}" />
+              <input type="hidden" name="decision" value="rejected" />
+              <input type="hidden" name="reason" value="" />
+              <button class="btn-small btn-danger">ไม่ผ่าน</button>
+            </form>
+          </div>
+        </div>`;
+    })
+  );
+
+  // ---------- ส่วนที่ 2: ค้นหา Sponsor รายตัว ----------
+  const keyword = query.q || '';
+  let searchResultsHtml = '';
+  if (keyword.trim()) {
+    const results = await searchSponsors(keyword.trim());
+    searchResultsHtml =
+      results
+        .map(
+          (s) => `
+        <a href="/api/admin/sponsors?q=${encodeURIComponent(keyword)}&sponsor_id=${s.id}" class="link" style="display:block; padding:8px 0; border-bottom:1px solid #f0f0f0;">
+          <strong>${s.sponsor_code}</strong> — ${s.company_name} <span class="hint">(${s.email})</span>
+        </a>`
+        )
+        .join('') || '<p class="muted">ไม่พบ Sponsor ที่ตรงกับคำค้นหา</p>';
+  }
+
+  const searchSection = `
+    <div class="section">
+      <h2>ค้นหา Sponsor</h2>
+      <p class="hint">พิมพ์ชื่อบริษัท หรือ Sponsor Code (เช่น "01")</p>
+      <form method="GET" action="/api/admin/sponsors" style="display:flex; gap:8px; max-width:420px;">
+        <input type="text" name="q" value="${keyword}" placeholder="ชื่อบริษัท หรือ Code" class="table-input" style="flex:1;" autofocus />
+        <button type="submit" class="btn-small">ค้นหา</button>
+      </form>
+      ${keyword.trim() ? `<div style="margin-top:12px;">${searchResultsHtml}</div>` : ''}
+    </div>`;
+
+  // ---------- ส่วนที่ 3: รายละเอียด Sponsor ที่เลือกจากผลค้นหา ----------
+  let detailSection = '';
+  if (query.sponsor_id) {
+    const sponsor = await getSponsorById(query.sponsor_id);
+    if (sponsor) {
+      const [content, bookings, creditBalance, approvedContentList] = await Promise.all([
+        getSponsorContent(sponsor.id),
+        supabase
+          .from('slot_bookings')
+          .select('id, slot_number, week_start, price, payment_status, approval_status, rejection_reason, updated_at, office_accounts(office_name), sponsor_content(file_name)')
+          .eq('sponsor_id', sponsor.id)
+          .order('week_start', { ascending: false }),
+        getSponsorCreditBalance(sponsor.id),
+        getPreviouslyApprovedContent(sponsor.id),
+      ]);
+
+      const contentRows = await Promise.all(
+        content.map(async (c) => {
+          const url = await getSignedContentUrl(c.file_path);
+          const preview =
+            c.file_type === 'video'
+              ? `<video src="${url}" controls style="width:100%; max-height:120px; border-radius:8px;"></video>`
+              : `<img src="${url}" style="width:100%; max-height:120px; object-fit:cover; border-radius:8px;" />`;
+          return `<div class="content-review-card">${preview}<p style="font-size:12px; margin:6px 0 0;">${c.file_name}</p></div>`;
+        })
+      );
+
+      const approvedOptionsHtml = approvedContentList.map((c) => `<option value="${c.id}">${c.file_name}</option>`).join('');
+
+      const bookingRows = (bookings.data || [])
+        .map((b) => {
+          const payLabel = { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'คืนเงินแล้ว' }[b.payment_status] || b.payment_status;
+          const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
+          const reasonLine = b.approval_status === 'rejected' && b.rejection_reason ? `<div class="hint" style="color:#e76f51;">เหตุผล: ${b.rejection_reason}</div>` : '';
+          const updatedLine = `<div class="hint">แก้ไขล่าสุด: ${new Date(b.updated_at).toLocaleString('th-TH')}</div>`;
+
+          const changeContentForm = approvedContentList.length
+            ? `<form method="POST" action="/api/admin/action?action=admin_update_booking_content" style="margin-top:4px; display:flex; gap:4px;">
+                 <input type="hidden" name="booking_id" value="${b.id}" />
+                 <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
+                 <select name="sponsor_content_id" class="table-input" style="font-size:12px;">${approvedOptionsHtml}</select>
+                 <button class="btn-small">เปลี่ยนไฟล์</button>
+               </form>`
+            : '';
+
+          return `
+            <tr>
+              <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
+              <td>${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+              <td>${b.sponsor_content?.file_name || '-'}${changeContentForm}</td>
+              <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
+              <td style="text-align:center;">${payLabel}</td>
+              <td style="text-align:center;">${approvalLabel}${reasonLine}${updatedLine}</td>
+            </tr>`;
+        })
+        .join('');
+
+      const editForm = canManageSponsors
+        ? `
+        <form method="POST" action="/api/admin/action?action=sponsor_account_update" class="stack-form" style="max-width:600px;">
+          <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div><label>ชื่อบริษัท</label><input type="text" name="company_name" value="${sponsor.company_name || ''}" required /></div>
+            <div><label>อีเมล (username)</label><input type="email" name="email" value="${sponsor.email || ''}" required /></div>
+            <div><label>เลขประจำตัวผู้เสียภาษี</label><input type="text" name="tax_id" value="${sponsor.tax_id || ''}" /></div>
+            <div><label>ชื่อผู้ติดต่อ</label><input type="text" name="contact_name" value="${sponsor.contact_name || ''}" /></div>
+            <div><label>เบอร์โทร</label><input type="text" name="contact_phone" value="${sponsor.contact_phone || ''}" /></div>
+            <div><label>ประเภทธุรกิจ</label><input type="text" name="business_type" value="${sponsor.business_type || ''}" /></div>
+          </div>
+          <label>ที่อยู่</label>
+          <input type="text" name="address" value="${sponsor.address || ''}" />
+          <label>ตั้งรหัสผ่านใหม่ (เว้นว่างถ้าไม่เปลี่ยน)</label>
+          <input type="password" name="password" />
+          <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึก</button>
+        </form>
+        <form method="POST" action="/api/admin/action?action=sponsor_account_delete" onsubmit="return confirm('ลบบัญชี Sponsor นี้ถาวร? ประวัติการจองทั้งหมดจะหายไปด้วย')" style="margin-top:8px;">
+          <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
+          <button type="submit" class="btn-small btn-danger">ลบบัญชีนี้</button>
+        </form>`
+        : `<p class="hint">ชื่อบริษัท: ${sponsor.company_name} — อีเมล: ${sponsor.email} — เบอร์โทร: ${sponsor.contact_phone || '-'}</p>`;
+
+      detailSection = `
+        <div class="section">
+          <h2>${sponsor.company_name} <span class="hint">(Code: ${sponsor.sponsor_code})</span></h2>
+          <p style="font-size:14px; margin:4px 0 12px;">เครดิตคงเหลือ: <strong style="color:#06c755;">${creditBalance.toLocaleString()} บาท</strong></p>
+          <a href="/api/admin/chat?thread_type=sponsor&thread_id=${sponsor.id}" class="btn-small" style="display:inline-block; margin-bottom:12px;">แชทกับ Sponsor นี้</a>
+          ${editForm}
+        </div>
+        <div class="section">
+          <h2>คลัง Content (${content.length} ไฟล์)</h2>
+          <div class="content-grid">${contentRows.join('') || '<p class="muted">ยังไม่มีไฟล์</p>'}</div>
+        </div>
+        <div class="section">
+          <h2>ประวัติการจอง</h2>
+          <table>
+            <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th></tr>
+            ${bookingRows || '<tr><td colspan="6" class="muted">ยังไม่มีการจอง</td></tr>'}
+          </table>
+        </div>`;
+    } else {
+      detailSection = `<div class="section"><p class="muted">ไม่พบ Sponsor นี้</p></div>`;
+    }
+  }
+
+  const bookingRows = allBookings
+    .map((b) => {
+      const isPaid = b.payment_status === 'paid';
+      const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
+      return `
+        <tr>
+          <td>${b.sponsors?.company_name || '-'} <span class="hint">(${b.sponsors?.sponsor_code || '-'})</span></td>
+          <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
+          <td>${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+          <td>${b.sponsor_content?.file_name || '-'}</td>
+          <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
+          <td style="text-align:center;">
+            ${
+              isPaid
+                ? '<span class="badge-used">ชำระแล้ว</span>'
+                : `<form method="POST" action="/api/admin/action?action=booking_mark_paid" style="display:inline;">
+                     <input type="hidden" name="booking_id" value="${b.id}" />
+                     <button class="btn-small">ยืนยันรับเงิน</button>
+                   </form>`
+            }
+          </td>
+          <td style="text-align:center;">${approvalLabel}</td>
+          <td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=booking_cancel" onsubmit="return confirm('ยกเลิกการจองนี้?')" style="display:inline;">
+              <input type="hidden" name="booking_id" value="${b.id}" />
+              <button class="btn-small btn-danger">ยกเลิก</button>
+            </form>
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <script>
+      function fillReason(form) {
+        const reason = prompt('เหตุผลที่ไม่อนุมัติ (จำเป็นต้องกรอก จะแจ้งให้ Sponsor เห็น)');
+        if (!reason || !reason.trim()) { return false; }
+        form.reason.value = reason.trim();
+        return true;
+      }
+    </script>
+    <div class="section">
+      <h2>การจองที่รอตรวจสอบไฟล์ก่อนขึ้น CMS (${pendingBookings.length})</h2>
+      <div class="content-grid">${pendingCards.join('') || '<p class="muted">ไม่มีรายการรอตรวจสอบ</p>'}</div>
+    </div>
+    ${searchSection}
+    ${detailSection}
+    <div class="section">
+      <h2>การจองทั้งหมด (ภาพรวม)</h2>
+      <table>
+        <tr><th>Sponsor</th><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th><th></th></tr>
+        ${bookingRows || '<tr><td colspan="8" class="muted">ยังไม่มีการจอง</td></tr>'}
+      </table>
+    </div>
+    <style>
+      .content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 12px; }
+      .content-review-card { border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px; }
+    </style>`;
+}
+
+
+function renderAccountTab(admin) {
+  return `
+    <div class="section">
+      <h2>บัญชีของฉัน</h2>
+      <p class="hint">Username: ${admin.username} — Role: ${admin.role}</p>
+    </div>
+    <div class="section">
+      <h2>เปลี่ยนรหัสผ่าน</h2>
+      <form method="POST" action="/api/admin/action?action=change_my_password" class="stack-form">
+        <label>รหัสผ่านปัจจุบัน</label>
+        <input type="password" name="current_password" required />
+        <label>รหัสผ่านใหม่</label>
+        <input type="password" name="new_password" required minlength="6" />
+        <button type="submit" class="btn-primary">บันทึกรหัสผ่านใหม่</button>
+      </form>
+    </div>`;
+}
+
+// ---------- Layout ----------
+// ---------- แชท (Admin คุยกับ Sponsor/Office) ----------
+async function renderChatTab(admin, query) {
+  const threads = await getAdminChatThreads();
+
+  const threadRows = threads
+    .map((t) => {
+      const label = t.threadType === 'sponsor' ? `Sponsor #${t.threadId}` : `Office #${t.threadId}`;
+      const isActive = String(query.thread_id) === String(t.threadId) && query.thread_type === t.threadType;
+      return `
+        <a href="/api/admin/chat?thread_type=${t.threadType}&thread_id=${t.threadId}" class="chat-thread-item ${isActive ? 'active' : ''}">
+          <div style="display:flex; justify-content:space-between;">
+            <strong style="font-size:13px;">${label}</strong>
+            ${t.unreadCount > 0 ? `<span class="tier-tag" style="background:#e76f51;">${t.unreadCount}</span>` : ''}
+          </div>
+          <p class="hint" style="margin:2px 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${t.lastSenderLabel || ''}: ${t.lastMessage}</p>
+        </a>`;
+    })
+    .join('');
+
+  let conversationHtml = '<div class="section"><p class="muted">เลือกแชททางซ้ายเพื่อเริ่มดูข้อความ</p></div>';
+  if (query.thread_type && query.thread_id) {
+    conversationHtml = `
+      <div class="section">
+        <h2>${query.thread_type === 'sponsor' ? 'Sponsor' : 'Office'} #${query.thread_id}</h2>
+        <div id="chatBox" style="height:360px; overflow-y:auto; border:1px solid #f0f0f0; border-radius:8px; padding:12px; margin-top:8px;"></div>
+        <form id="chatSendForm" style="display:flex; gap:8px; margin-top:12px;">
+          <input type="text" id="chatInput" placeholder="พิมพ์ข้อความ..." style="flex:1;" />
+          <button type="submit" class="btn-small">ส่ง</button>
+        </form>
+      </div>
+      <script>
+        const threadType = ${JSON.stringify(query.thread_type)};
+        const threadId = ${JSON.stringify(String(query.thread_id))};
+        const chatBox = document.getElementById('chatBox');
+
+        function renderMessages(messages) {
+          chatBox.innerHTML = messages.map((m) => {
+            const mine = m.sender_type === 'admin';
+            return '<div style="margin-bottom:10px; text-align:' + (mine ? 'right' : 'left') + ';">' +
+              '<div style="display:inline-block; max-width:75%; padding:8px 12px; border-radius:10px; background:' + (mine ? '#1b1f27' : '#f0f0f0') + '; color:' + (mine ? 'white' : '#1b1f27') + '; font-size:13px; text-align:left;">' +
+              '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + (m.sender_label || m.sender_type) + '</div>' +
+              m.message.replace(/</g, '&lt;') +
+              '</div></div>';
+          }).join('');
+          chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        async function poll() {
+          const res = await fetch('/api/admin/action?action=chat_poll&thread_type=' + threadType + '&thread_id=' + threadId);
+          const data = await res.json();
+          renderMessages(data.messages || []);
+        }
+
+        document.getElementById('chatSendForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const input = document.getElementById('chatInput');
+          const message = input.value.trim();
+          if (!message) return;
+          input.value = '';
+          await fetch('/api/admin/action?action=chat_send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ thread_type: threadType, thread_id: threadId, message }).toString(),
+          });
+          poll();
+        });
+
+        poll();
+        setInterval(poll, 2500);
+      </script>`;
+  }
+
+  return `
+    <div style="display:grid; grid-template-columns:280px 1fr; gap:16px; align-items:start;">
+      <div class="section" style="padding:12px;">
+        <h2 style="margin-bottom:8px;">แชททั้งหมด</h2>
+        ${threadRows || '<p class="muted" style="font-size:13px;">ยังไม่มีข้อความ</p>'}
+      </div>
+      <div>${conversationHtml}</div>
+    </div>
+    <style>
+      .chat-thread-item { display:block; padding:10px; border-radius:8px; text-decoration:none; color:#1b1f27; margin-bottom:4px; }
+      .chat-thread-item:hover, .chat-thread-item.active { background:#f7f8fa; }
+    </style>`;
+}
+
+function renderLayout(activePage, admin, content) {
+  const tabs = [
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'members', label: 'Members' },
+    { key: 'rewards', label: 'Rewards' },
+    { key: 'campaigns', label: 'Campaigns' },
+    { key: 'office', label: 'Office Area' },
+    { key: 'sponsors', label: 'Sponsors' },
+    { key: 'chat', label: 'แชท' },
+  ];
+  if (can(admin.role, 'manage_admins') || can(admin.role, 'manage_staff')) tabs.push({ key: 'admins', label: 'Admins' });
+  tabs.push({ key: 'account', label: 'My Account' });
+
+  const nav = tabs
+    .map((t) => `<a href="/api/admin/${t.key}" class="tab ${activePage === t.key ? 'active' : ''}">${t.label}</a>`)
+    .join('');
+
   return `<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -541,29 +1298,55 @@ function renderLoginPage(error) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="/theme.css" />
 <script src="/theme.js" defer></script>
-<title>Admin Login</title>
+<title>Admin — ${activePage}</title>
 <style>
-  body { font-family: sans-serif; background: #f7f8fa; margin: 0; padding: 24px; color: #1b1f27; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .card { background: white; border-radius: 16px; padding: 32px; max-width: 360px; width: 100%; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
-  h1 { font-size: 18px; margin: 0 0 20px; }
-  label { display: block; font-size: 13px; color: #6b7280; margin-bottom: 4px; }
-  input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
-  button { width: 100%; background: #1b1f27; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; cursor: pointer; }
-  .error { color: #e76f51; font-size: 13px; margin-bottom: 12px; }
+  * { box-sizing: border-box; }
+  body { font-family: sans-serif; background: #f7f8fa; margin: 0; color: #1b1f27; }
+  header { background: white; border-bottom: 1px solid #e5e7eb; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { font-weight: 700; padding: 16px 0; }
+  nav { display: flex; gap: 4px; }
+  .tab { padding: 16px 12px; text-decoration: none; color: #6b7280; font-size: 14px; border-bottom: 2px solid transparent; }
+  .tab.active { color: #1b1f27; font-weight: 700; border-bottom-color: #1b1f27; }
+  .user-info { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #6b7280; }
+  .logout-link { color: #e76f51; text-decoration: none; }
+  main { padding: 24px; max-width: 960px; margin: 0 auto; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .card .label { font-size: 13px; color: #6b7280; margin: 0 0 4px; }
+  .card .value { font-size: 28px; font-weight: 700; margin: 0; }
+  .section { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .hint, .muted { font-size: 12px; color: #9ca3af; }
+  .link { color: #2a78d6; text-decoration: none; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  th { text-align: left; color: #6b7280; font-weight: 500; padding: 6px 4px; border-bottom: 1px solid #e5e7eb; }
+  td { padding: 8px 4px; border-bottom: 1px solid #f0f0f0; }
+  .stat-pill { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; border: 1.5px solid; border-radius: 10px; padding: 8px 16px; margin-right: 8px; font-size: 13px; font-weight: 600; text-decoration: none; }
+  .clear-filter { font-size: 12px; color: #2a78d6; margin-left: 8px; }
+  .btn-small { background: #06c755; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .btn-muted { background: #9ca3af; }
+  .btn-danger { background: #e76f51; }
+  .btn-primary { background: #1b1f27; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; margin-top: 8px; }
+  .badge-used { color: #9ca3af; font-size: 12px; }
+  .tier-tag { color: white; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+  .inline-form { display: contents; }
+  .stack-form { display: flex; flex-direction: column; max-width: 400px; }
+  .stack-form label { font-size: 13px; color: #6b7280; margin: 10px 0 4px; }
+  .stack-form input { padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; }
+  .table-input { width: 100%; padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; }
+  .table-input.small { width: 80px; }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Admin Login</h1>
-    ${error ? `<p class="error">${error}</p>` : ''}
-    <form method="POST" action="/api/admin/action?action=login">
-      <label>Username</label>
-      <input type="text" name="username" required autofocus />
-      <label>Password</label>
-      <input type="password" name="password" required />
-      <button type="submit">Log in</button>
-    </form>
-  </div>
+  <header>
+    <div class="brand">QR Tracker Admin</div>
+    <nav>${nav}</nav>
+    <div class="user-info">
+      <span>${admin.username} (${admin.role})</span>
+      <a href="/api/admin/action?action=logout" class="logout-link">Logout</a>
+    </div>
+  </header>
+  <main>${content}</main>
 </body>
 </html>`;
 }
