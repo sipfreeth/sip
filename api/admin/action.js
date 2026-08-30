@@ -28,7 +28,8 @@ import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
 import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
-import { updateBookingApproval, grantSponsorCredit } from '../../lib/sponsorArea.js';
+import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
+import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
 
 async function readBody(req) {
   let body = '';
@@ -85,6 +86,17 @@ export default async function handler(req, res) {
   // ---------- ทุก action ต่อจากนี้ ต้อง login ก่อน ----------
   const admin = await requireAdmin(req, res);
   if (!admin) return;
+
+  // ---------- Poll แชท (GET เพื่อรีเฟรชข้อความถี่ๆ) ----------
+  if (actionParam === 'chat_poll' && req.method === 'GET') {
+    const threadType = req.query.thread_type;
+    const threadId = req.query.thread_id;
+    const messages = await getMessages(threadType, threadId);
+    await markThreadRead(threadType, threadId, 'admin');
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({ messages });
+    return;
+  }
 
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
@@ -401,12 +413,18 @@ export default async function handler(req, res) {
   if (actionParam === 'booking_review') {
     const bookingId = params.get('booking_id');
     const decision = params.get('decision'); // 'approved' หรือ 'rejected'
+    const reason = (params.get('reason') || '').trim();
+
     if (!['approved', 'rejected'].includes(decision)) {
       res.status(400).send('decision ไม่ถูกต้อง');
       return;
     }
+    if (decision === 'rejected' && !reason) {
+      res.status(400).send('กรุณาใส่เหตุผลที่ไม่อนุมัติ');
+      return;
+    }
 
-    await updateBookingApproval(bookingId, decision, admin.username);
+    await updateBookingApproval(bookingId, decision, admin.username, reason);
 
     if (decision === 'rejected') {
       // เนื้อหาไม่ผ่านอนุมัติ → ยกเลิก Slot นี้ ไม่คืนเงินสด แต่คืนเป็นเครดิตแทน (ใช้จองครั้งต่อไปได้ อายุ 1 ปี)
@@ -425,6 +443,42 @@ export default async function handler(req, res) {
 
     res.writeHead(302, { Location: '/api/admin/sponsors' });
     res.end();
+    return;
+  }
+
+  // ---------- 9b. เปลี่ยน Content ของ Booking แทน Sponsor (ตามที่แจ้งผ่านแชท) ----------
+  if (actionParam === 'admin_update_booking_content') {
+    const bookingId = params.get('booking_id');
+    const sponsorId = params.get('sponsor_id');
+    const contentId = params.get('sponsor_content_id');
+    try {
+      await adminUpdateBookingContent(bookingId, sponsorId, contentId, `${admin.username} (${admin.role})`);
+    } catch (err) {
+      res.status(400).send(err.message);
+      return;
+    }
+    res.writeHead(302, { Location: `/api/admin/sponsors?sponsor_id=${sponsorId}` });
+    res.end();
+    return;
+  }
+
+  // ---------- แชท (Admin ตอบทั้ง Sponsor และ Office) ----------
+  if (actionParam === 'chat_send') {
+    const threadType = params.get('thread_type');
+    const threadId = params.get('thread_id');
+    try {
+      await sendMessage({
+        threadType,
+        threadId,
+        senderType: 'admin',
+        senderLabel: admin.username,
+        message: params.get('message'),
+      });
+    } catch (err) {
+      res.status(400).send(err.message);
+      return;
+    }
+    res.status(200).send('ok');
     return;
   }
 
