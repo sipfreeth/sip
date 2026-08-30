@@ -289,21 +289,41 @@ export default async function handler(req, res) {
 
   // ---------- 6b. OFFICE ACCOUNT MANAGEMENT (super_admin, admin) ----------
   if (['office_account_create', 'office_account_update', 'office_account_delete'].includes(actionParam)) {
-    if (!requirePermission(res, admin.role, 'manage_offices')) return;
+    console.error('🔍OFFICE_DEBUG🔍 action:', actionParam, 'admin.role:', admin.role, 'canManageOffices:', can(admin.role, 'manage_offices'));
+
+    if (!requirePermission(res, admin.role, 'manage_offices')) {
+      console.error('🔍OFFICE_DEBUG🔍 blocked by requirePermission — role ไม่มีสิทธิ์ manage_offices');
+      return;
+    }
 
     let dbError = null;
 
     if (actionParam === 'office_account_create') {
-      const hash = await bcrypt.hash(params.get('password'), 10);
-      const { error } = await supabase.from('office_accounts').insert({
+      console.error('🔍OFFICE_DEBUG🔍 params:', {
         office_name: params.get('office_name'),
         username: params.get('username'),
-        email: (params.get('email') || '').trim().toLowerCase() || null,
-        password_hash: hash,
-        price_per_week: Number(params.get('price_per_week') || 0),
-        sponsor_slot_count: Number(params.get('sponsor_slot_count') || 18),
+        email: params.get('email'),
+        price_per_week: params.get('price_per_week'),
+        sponsor_slot_count: params.get('sponsor_slot_count'),
+        has_password: Boolean(params.get('password')),
       });
-      dbError = error;
+
+      const hash = await bcrypt.hash(params.get('password'), 10);
+      const { data, error } = await supabase
+        .from('office_accounts')
+        .insert({
+          office_name: params.get('office_name'),
+          username: params.get('username'),
+          email: (params.get('email') || '').trim().toLowerCase() || null,
+          password_hash: hash,
+          price_per_week: Number(params.get('price_per_week') || 0),
+          sponsor_slot_count: Number(params.get('sponsor_slot_count') || 18),
+        })
+        .select();
+
+      console.error('🔍OFFICE_DEBUG🔍 supabase result — data:', JSON.stringify(data), 'error:', JSON.stringify(error));
+
+      dbError = error || (!data || !data.length ? { message: 'ไม่มีข้อผิดพลาดจากฐานข้อมูล แต่ไม่มีแถวถูกสร้างขึ้นจริง (อาจติด Row Level Security หรือ Policy บางอย่าง)' } : null);
     }
 
     if (actionParam === 'office_account_update') {
