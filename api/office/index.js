@@ -34,6 +34,54 @@ export default async function handler(req, res) {
       </form>
     </div>`;
 
+  const chatSection = `
+    <div class="section">
+      <h2>แชทกับทีมงาน</h2>
+      <div id="chatBox" style="height:320px; overflow-y:auto; border:1px solid #f0f0f0; border-radius:8px; padding:12px; margin-top:8px;"></div>
+      <form id="chatSendForm" style="display:flex; gap:8px; margin-top:12px;">
+        <input type="text" id="chatInput" placeholder="พิมพ์ข้อความ..." style="flex:1;" />
+        <button type="submit" class="btn-primary" style="width:auto; padding:8px 16px;">ส่ง</button>
+      </form>
+    </div>
+    <script>
+      const chatBox = document.getElementById('chatBox');
+
+      function renderMessages(messages) {
+        chatBox.innerHTML = messages.map((m) => {
+          const mine = m.sender_type === 'office';
+          return '<div style="margin-bottom:10px; text-align:' + (mine ? 'right' : 'left') + ';">' +
+            '<div style="display:inline-block; max-width:75%; padding:8px 12px; border-radius:10px; background:' + (mine ? '#1b1f27' : '#f0f0f0') + '; color:' + (mine ? 'white' : '#1b1f27') + '; font-size:13px; text-align:left;">' +
+            '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + (m.sender_label || (mine ? 'คุณ' : 'ทีมงาน')) + '</div>' +
+            m.message.replace(/</g, '&lt;') +
+            '</div></div>';
+        }).join('');
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      async function pollChat() {
+        const res = await fetch('/api/office/action?action=chat_poll');
+        const data = await res.json();
+        renderMessages(data.messages || []);
+      }
+
+      document.getElementById('chatSendForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('chatInput');
+        const message = input.value.trim();
+        if (!message) return;
+        input.value = '';
+        await fetch('/api/office/action?action=chat_send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message }).toString(),
+        });
+        pollChat();
+      });
+
+      pollChat();
+      setInterval(pollChat, 2500);
+    </script>`;
+
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(`<!DOCTYPE html>
 <html lang="th">
@@ -63,7 +111,7 @@ export default async function handler(req, res) {
     <div class="brand">Office Area</div>
     <a href="/api/office/action?action=logout" class="logout-link">Logout</a>
   </header>
-  <main>${content}${passwordSection}</main>
+  <main>${content}${chatSection}${passwordSection}</main>
 </body>
 </html>`);
 }
