@@ -642,6 +642,44 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ---------- จัดการร้านค้าเกมเลี้ยงสัตว์ (อาหาร/ขนม/เครื่องแต่งกาย) ----------
+  if (actionParam === 'pet_shop_item_create') {
+    const { error } = await supabase.from('pet_shop_items').insert({
+      item_type: params.get('item_type'),
+      name: params.get('name'),
+      description: params.get('description') || null,
+      points_cost: Number(params.get('points_cost') || 0),
+      hunger_boost: Number(params.get('hunger_boost') || 0),
+      happiness_boost: Number(params.get('happiness_boost') || 0),
+    });
+    if (error) {
+      res.status(400).send(`เพิ่มไอเทมไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/admin/pet-shop' });
+    res.end();
+    return;
+  }
+
+  if (actionParam === 'pet_shop_item_toggle') {
+    const { data: item } = await supabase.from('pet_shop_items').select('active').eq('id', params.get('item_id')).single();
+    await supabase.from('pet_shop_items').update({ active: !item?.active }).eq('id', params.get('item_id'));
+    res.writeHead(302, { Location: '/api/admin/pet-shop' });
+    res.end();
+    return;
+  }
+
+  if (actionParam === 'pet_game_config_update') {
+    const keys = params.getAll('config_key');
+    const values = params.getAll('config_value');
+    for (let i = 0; i < keys.length; i++) {
+      await supabase.from('pet_game_config').update({ value: values[i] }).eq('key', keys[i]);
+    }
+    res.writeHead(302, { Location: '/api/admin/pet-shop' });
+    res.end();
+    return;
+  }
+
   res.status(400).send('ไม่รู้จัก action นี้');
 }
 
