@@ -14,6 +14,7 @@ import { verifyRedeemToken } from '../lib/memberToken.js';
 import { getCurrentYearStart } from '../lib/tiers.js';
 import { createPet, feedPet, playWithPet, giveTreat, buyAccessory, toggleEquip, getMemberPet, getPetInventory, getShopItems, getPetBadges } from '../lib/petGame.js';
 import { getMemberFromSession } from '../lib/memberAuth.js';
+import { sendPushNotification } from '../lib/webpush.js';
 
 async function getSpendableBalance(memberId) {
   const yearStart = getCurrentYearStart();
@@ -145,7 +146,7 @@ export default async function handler(req, res) {
   }
 
   // ---------- Action ในเกม (ใช้ Session Cookie ไม่ต้องผ่าน LINE ซ้ำทุกครั้ง — กดถี่ได้ลื่นๆ) ----------
-  if (['pet_create', 'pet_feed', 'pet_play', 'pet_shop', 'pet_treat', 'pet_buy', 'pet_equip'].includes(doParam)) {
+  if (['pet_create', 'pet_feed', 'pet_play', 'pet_shop', 'pet_treat', 'pet_buy', 'pet_equip', 'push_subscribe'].includes(doParam)) {
     const memberId = getMemberFromSession(req);
     if (!memberId) {
       res.status(401).send('Session หมดอายุ กรุณาเข้าหน้าสัตว์เลี้ยงใหม่อีกครั้ง');
@@ -251,6 +252,31 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (doParam === 'push_subscribe') {
+      if (req.method !== 'POST') {
+        res.status(405).send('Method not allowed');
+        return;
+      }
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const sub = JSON.parse(body);
+      const { error } = await supabase.from('push_subscriptions').upsert(
+        {
+          member_id: memberId,
+          endpoint: sub.endpoint,
+          p256dh: sub.keys.p256dh,
+          auth: sub.keys.auth,
+        },
+        { onConflict: 'endpoint' }
+      );
+      if (error) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      res.status(200).send('ok');
+      return;
+    }
+
     if (doParam === 'pet_shop') {
       const pet = await getMemberPet(memberId);
       if (!pet) {
@@ -268,6 +294,52 @@ export default async function handler(req, res) {
       res.status(200).send(renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory));
       return;
     }
+  }
+
+  // ---------- Cron: เช็คสัตว์เลี้ยงที่หิว ส่ง Push Notification (Vercel เรียกอัตโนมัติทุกชั่วโมง) ----------
+  // ป้องกันด้วย CRON_SECRET ที่ Vercel แนบมาอัตโนมัติเมื่อตั้งค่า Environment Variable ชื่อนี้ไว้
+  if (doParam === 'cron_hunger_check') {
+    const authHeader = req.headers.authorization || '';
+    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      res.status(401).send('unauthorized');
+      return;
+    }
+
+    const { data: config } = await supabase.from('pet_game_config').select('key, value').eq('key', 'hunger_notify_threshold');
+    const threshold = Number(config?.[0]?.value || 30);
+    const cooldownMs = 6 * 60 * 60 * 1000; // แจ้งซ้ำได้ไม่เกินทุก 6 ชั่วโมง กันสแปม
+
+    const { data: hungryPets } = await supabase
+      .from('member_pets')
+      .select('id, member_id, hunger, name, last_hunger_notified_at')
+      .lt('hunger', threshold);
+
+    let sentCount = 0;
+    for (const pet of hungryPets || []) {
+      const lastNotified = pet.last_hunger_notified_at ? new Date(pet.last_hunger_notified_at).getTime() : 0;
+      if (Date.now() - lastNotified < cooldownMs) continue;
+
+      const { data: subs } = await supabase.from('push_subscriptions').select('*').eq('member_id', pet.member_id);
+      for (const sub of subs || []) {
+        try {
+          await sendPushNotification(sub, {
+            title: `${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! 🍖`,
+            body: 'กลับมาให้อาหารกันเถอะ',
+            url: '/api/member-action?do=pet',
+          });
+          sentCount++;
+        } catch (err) {
+          // subscription หมดอายุ/ถูกยกเลิกจากฝั่งเบราว์เซอร์ — ลบทิ้งกันค้าง
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+          }
+        }
+      }
+      await supabase.from('member_pets').update({ last_hunger_notified_at: new Date().toISOString() }).eq('id', pet.id);
+    }
+
+    res.status(200).json({ checked: (hungryPets || []).length, sent: sentCount });
+    return;
   }
 
   res.status(400).send('ไม่รู้จัก do parameter นี้');
