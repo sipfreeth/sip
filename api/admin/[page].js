@@ -1192,9 +1192,22 @@ function renderAccountTab(admin) {
 async function renderChatTab(admin, query) {
   const threads = await getAdminChatThreads();
 
+  // ดึงชื่อจริงของ Sponsor/Office ที่ลงทะเบียนไว้ มาแสดงแทน ID ดิบๆ
+  const sponsorIds = threads.filter((t) => t.threadType === 'sponsor').map((t) => t.threadId);
+  const officeIds = threads.filter((t) => t.threadType === 'office').map((t) => t.threadId);
+  const [sponsorRows, officeRows] = await Promise.all([
+    sponsorIds.length ? supabase.from('sponsors').select('id, company_name').in('id', sponsorIds) : { data: [] },
+    officeIds.length ? supabase.from('office_accounts').select('id, office_name').in('id', officeIds) : { data: [] },
+  ]);
+  const sponsorNames = Object.fromEntries((sponsorRows.data || []).map((s) => [s.id, s.company_name]));
+  const officeNames = Object.fromEntries((officeRows.data || []).map((o) => [o.id, o.office_name]));
+
+  const threadLabel = (threadType, threadId) =>
+    threadType === 'sponsor' ? `Sponsor ${sponsorNames[threadId] || `#${threadId}`}` : `Office ${officeNames[threadId] || `#${threadId}`}`;
+
   const threadRows = threads
     .map((t) => {
-      const label = t.threadType === 'sponsor' ? `Sponsor #${t.threadId}` : `Office #${t.threadId}`;
+      const label = threadLabel(t.threadType, t.threadId);
       const isActive = String(query.thread_id) === String(t.threadId) && query.thread_type === t.threadType;
       return `
         <a href="/api/admin/chat?thread_type=${t.threadType}&thread_id=${t.threadId}" class="chat-thread-item ${isActive ? 'active' : ''}">
@@ -1211,7 +1224,7 @@ async function renderChatTab(admin, query) {
   if (query.thread_type && query.thread_id) {
     conversationHtml = `
       <div class="section">
-        <h2>${query.thread_type === 'sponsor' ? 'Sponsor' : 'Office'} #${query.thread_id}</h2>
+        <h2>${threadLabel(query.thread_type, query.thread_id)}</h2>
         <div id="chatBox" style="height:360px; overflow-y:auto; border:1px solid #f0f0f0; border-radius:8px; padding:12px; margin-top:8px;"></div>
         <form id="chatSendForm" style="display:flex; gap:8px; margin-top:12px;">
           <input type="text" id="chatInput" placeholder="พิมพ์ข้อความ..." style="flex:1;" />
