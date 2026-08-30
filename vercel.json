@@ -1,5 +1,10 @@
 {
   "crons": [
     { "path": "/api/member-action?do=cron_hunger_check", "schedule": "0 * * * *" }
-  ]
+  ],
+  "functions": {
+    "api/member-action.js": {
+      "includeFiles": "node_modules/web-push/**"
+    }
+  }
 }
