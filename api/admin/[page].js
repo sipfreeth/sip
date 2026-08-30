@@ -16,7 +16,7 @@ import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent
 import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
 import { getAdminChatThreads } from '../../lib/chat.js';
 
-const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat'];
+const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat', 'pet-shop'];
 
 export default async function handler(req, res) {
   const admin = await requireAdmin(req, res);
@@ -39,6 +39,7 @@ export default async function handler(req, res) {
   if (page === 'account') content = renderAccountTab(admin);
   if (page === 'sponsors') content = await renderSponsorsTab(admin, req.query);
   if (page === 'chat') content = await renderChatTab(admin, req.query);
+  if (page === 'pet-shop') content = await renderPetShopAdminTab(admin);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, admin, content));
@@ -1301,6 +1302,95 @@ async function renderChatTab(admin, query) {
     </style>`;
 }
 
+// ---------- จัดการร้านค้าเกมเลี้ยงสัตว์ ----------
+async function renderPetShopAdminTab(admin) {
+  const [itemsRes, configRes] = await Promise.all([
+    supabase.from('pet_shop_items').select('*').order('item_type').order('points_cost'),
+    supabase.from('pet_game_config').select('*').order('key'),
+  ]);
+
+  const items = itemsRes.data || [];
+  const config = configRes.data || [];
+
+  const typeLabel = { food: '🍚 อาหาร', treat: '🍬 ขนม', accessory: '🎀 เครื่องแต่งกาย' };
+
+  const itemRows = items
+    .map(
+      (item) => `
+      <tr style="${item.active ? '' : 'opacity:0.5;'}">
+        <td>${typeLabel[item.item_type] || item.item_type}</td>
+        <td>${item.name}</td>
+        <td style="text-align:right;">${item.points_cost.toLocaleString()}</td>
+        <td style="text-align:center;">${item.hunger_boost || '-'}</td>
+        <td style="text-align:center;">${item.happiness_boost || '-'}</td>
+        <td style="text-align:center;">
+          <form method="POST" action="/api/admin/action?action=pet_shop_item_toggle" style="display:inline;">
+            <input type="hidden" name="item_id" value="${item.id}" />
+            <button class="btn-small ${item.active ? 'btn-danger' : ''}">${item.active ? 'ปิดขาย' : 'เปิดขาย'}</button>
+          </form>
+        </td>
+      </tr>`
+    )
+    .join('');
+
+  const configRows = config
+    .map(
+      (c) => `
+      <tr>
+        <td>${c.key}</td>
+        <td>
+          <input type="hidden" name="config_key" value="${c.key}" />
+          <input type="text" name="config_value" value="${c.value}" class="table-input" style="width:100px;" />
+        </td>
+      </tr>`
+    )
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>เพิ่มไอเทมใหม่ในร้านค้า</h2>
+      <form method="POST" action="/api/admin/action?action=pet_shop_item_create" class="stack-form">
+        <label>ประเภท</label>
+        <select name="item_type" required>
+          <option value="food">🍚 อาหาร</option>
+          <option value="treat">🍬 ขนม</option>
+          <option value="accessory">🎀 เครื่องแต่งกาย</option>
+        </select>
+        <label>ชื่อไอเทม</label>
+        <input type="text" name="name" required />
+        <label>คำอธิบาย (ไม่บังคับ)</label>
+        <input type="text" name="description" />
+        <label>ราคา (Point)</label>
+        <input type="number" name="points_cost" min="0" required />
+        <label>เพิ่มความอิ่ม (% — เฉพาะอาหาร/ขนม)</label>
+        <input type="number" name="hunger_boost" min="0" max="100" value="0" />
+        <label>เพิ่มความสุข (% — เฉพาะอาหาร/ขนม)</label>
+        <input type="number" name="happiness_boost" min="0" max="100" value="0" />
+        <button type="submit" class="btn-primary" style="margin-top:12px;">เพิ่มไอเทม</button>
+      </form>
+    </div>
+
+    <div class="section">
+      <h2>ไอเทมทั้งหมดในร้าน (${items.length})</h2>
+      <table>
+        <tr><th>ประเภท</th><th>ชื่อ</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">อิ่ม %</th><th style="text-align:center;">สุข %</th><th></th></tr>
+        ${itemRows || '<tr><td colspan="6" class="muted">ยังไม่มีไอเทมในร้าน — เพิ่มจากฟอร์มด้านบน</td></tr>'}
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>ค่าคงที่ของเกม (ปรับได้เลย ไม่ต้องแก้โค้ด)</h2>
+      <p class="hint">เช่น ความหิวลดลงกี่ % ต่อชั่วโมง, EXP ที่ได้จากแต่ละกิจกรรม, EXP ที่ต้องใช้ขึ้นแต่ละระดับ</p>
+      <form method="POST" action="/api/admin/action?action=pet_game_config_update">
+        <table>
+          <tr><th>ตัวแปร</th><th>ค่า</th></tr>
+          ${configRows}
+        </table>
+        <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึกค่าทั้งหมด</button>
+      </form>
+    </div>`;
+}
+
 function renderLayout(activePage, admin, content) {
   const tabs = [
     { key: 'dashboard', label: 'Dashboard' },
@@ -1310,6 +1400,7 @@ function renderLayout(activePage, admin, content) {
     { key: 'office', label: 'Office Area' },
     { key: 'sponsors', label: 'Sponsors' },
     { key: 'chat', label: 'แชท' },
+    { key: 'pet-shop', label: 'ร้านสัตว์เลี้ยง' },
   ];
   if (can(admin.role, 'manage_admins') || can(admin.role, 'manage_staff')) tabs.push({ key: 'admins', label: 'Admins' });
   tabs.push({ key: 'account', label: 'My Account' });
