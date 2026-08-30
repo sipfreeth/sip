@@ -37,6 +37,7 @@ import { createOmiseCharge, getOmiseCharge, verifySlipWithSlipOK, createOmiseCus
 import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorArea.js';
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
+import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 
 async function readBody(req) {
   let body = '';
@@ -58,10 +59,16 @@ export default async function handler(req, res) {
       const params = await readBody(req);
       const email = (params.get('email') || '').trim().toLowerCase();
 
+      if (params.get('agree_terms') !== 'on') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderSignupPage('กรุณายืนยันว่าอ่านและยอมรับข้อกำหนดก่อนสมัครสมาชิก', params));
+        return;
+      }
+
       const { data: existing } = await supabase.from('sponsors').select('id').eq('email', email).maybeSingle();
       if (existing) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.status(200).send(renderSignupPage('อีเมลนี้ถูกใช้สมัครไปแล้ว'));
+        res.status(200).send(renderSignupPage('อีเมลนี้ถูกใช้สมัครไปแล้ว', params));
         return;
       }
 
@@ -77,13 +84,14 @@ export default async function handler(req, res) {
           business_type: params.get('business_type') || null,
           email,
           password_hash: hash,
+          terms_accepted_at: new Date().toISOString(),
         })
         .select('id')
         .single();
 
       if (error) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.status(200).send(renderSignupPage('สมัครไม่สำเร็จ ลองใหม่อีกครั้ง'));
+        res.status(200).send(renderSignupPage('สมัครไม่สำเร็จ ลองใหม่อีกครั้ง', params));
         return;
       }
 
@@ -257,6 +265,15 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ---------- Poll แชท (GET เพื่อรีเฟรชข้อความถี่ๆ) ----------
+  if (actionParam === 'chat_poll' && req.method === 'GET') {
+    const messages = await getMessages('sponsor', sponsor.id);
+    await markThreadRead('sponsor', sponsor.id, 'party');
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({ messages });
+    return;
+  }
+
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
     return;
@@ -402,9 +419,32 @@ export default async function handler(req, res) {
       res.status(400).send('ไม่ใช่ไฟล์ของบัญชีคุณ');
       return;
     }
-    await updateBookingContent(params.get('booking_id'), sponsor.id, contentId);
+    try {
+      await updateBookingContent(params.get('booking_id'), sponsor.id, contentId);
+    } catch (err) {
+      res.status(400).send(err.message);
+      return;
+    }
     res.writeHead(302, { Location: '/api/sponsor?page=bookings' });
     res.end();
+    return;
+  }
+
+  // ---------- แชทกับทีมงาน ----------
+  if (actionParam === 'chat_send') {
+    try {
+      await sendMessage({
+        threadType: 'sponsor',
+        threadId: sponsor.id,
+        senderType: 'sponsor',
+        senderLabel: sponsor.company_name,
+        message: params.get('message'),
+      });
+    } catch (err) {
+      res.status(400).send(err.message);
+      return;
+    }
+    res.status(200).send('ok');
     return;
   }
 
@@ -694,7 +734,53 @@ export default async function handler(req, res) {
   res.status(400).send('ไม่รู้จัก action นี้');
 }
 
-function renderSignupPage(error) {
+const TERMS_CONTENT = `
+<h3>ข้อกำหนดและนโยบายการแสดงผลเนื้อหา (Content &amp; Display Guidelines)</h3>
+<p>เอกสารฉบับนี้จัดทำขึ้นเพื่อกำหนดมาตรฐาน ขอบเขต ข้อจำกัดของเนื้อหา รวมถึงข้อตกลงในการป้องกันความขัดแย้งทางผลประโยชน์ ที่จะถูกเผยแพร่ผ่านเครือข่ายหน้าจอดิจิทัล (Digital Screen Network) ภายในพื้นที่สำนักงาน เพื่อรักษาภาพลักษณ์อันดี ปกป้องความปลอดภัยขององค์กร และป้องกันผลกระทบทางกฎหมาย</p>
+
+<h4>หมวดที่ 1: เนื้อหาที่ห้ามเผยแพร่เด็ดขาด (Prohibited Content)</h4>
+<p>ห้ามนำเข้า ส่งออก แพร่ภาพ หรือแสดงผลคอนเทนต์ที่มีลักษณะดังต่อไปนี้บนหน้าจอเด็ดขาด:</p>
+<p><strong>1.1 ความผิดทางกฎหมายและความมั่นคง</strong><br/>
+การละเมิดกฎหมายทุกประเภท รวมถึง พ.ร.บ. ว่าด้วยการกระทำความผิดเกี่ยวกับคอมพิวเตอร์ — ทรัพย์สินทางปัญญาที่ละเมิดลิขสิทธิ์ของบุคคลอื่นโดยไม่ได้รับอนุญาต — การเมืองและการเลือกตั้งในทุกรูปแบบ — การพนันและสิ่งผิดกฎหมาย ยาเสพติด อาวุธปืน</p>
+<p><strong>1.2 ศีลธรรม ความปลอดภัย และสุขอนามัย</strong><br/>
+เนื้อหาลามกอนาจาร (NSFW) — ความรุนแรงและความน่ากลัว — แอลกอฮอล์ ยาสูบ และสารมึนเมา</p>
+<p><strong>1.3 ธุรกิจสีเทาและการเงินที่มีความเสี่ยงสูง</strong><br/>
+คริปโตเคอร์เรนซี/โทเคนดิจิทัลที่ไม่มีใบอนุญาต — สินเชื่อนอกระบบและแชร์ลูกโซ่ — ผลิตภัณฑ์สุขภาพที่กล่าวอ้างสรรพคุณเกินจริงหรือไม่ได้รับอนุญาตจาก อย.</p>
+
+<h4>หมวดที่ 2: มาตรฐานความเหมาะสมในพื้นที่สำนักงาน (Workplace Appropriateness)</h4>
+<p><strong>2.1 พฤติกรรมและสังคม</strong><br/>
+ห้าม Hate Speech & Discrimination — ห้ามโฆษณาที่พาดพิงหรือโจมตีคู่แข่งในลักษณะเสียหาย — ห้ามเนื้อหาที่สร้างความตื่นตระหนกหรือข่าวปลอม</p>
+<p><strong>2.2 เทคนิคและการรบกวนทางสายตา</strong><br/>
+ห้ามการกะพริบถี่ๆ ที่อาจเป็นอันตรายต่อผู้ป่วยลมชัก — ตัวหนังสือต้องอ่านง่าย ห้ามตัววิ่งที่เร็วเกินไป — หลีกเลี่ยงโทนสีฉูดฉาดเกินความจำเป็น</p>
+
+<h4>หมวดที่ 3: ข้อกำหนดการจำกัดการแสดงผลโฆษณาและคู่แข่งทางธุรกิจ</h4>
+<p><strong>3.1</strong> สปอนเซอร์ไม่มีสิทธิ์เจาะจงหรือบังคับให้นำโฆษณาไปแสดงในสำนักงานของคู่แข่งทางธุรกิจโดยตรง ผู้ให้บริการมีระบบคัดกรองป้องกันไว้</p>
+<p><strong>3.2</strong> ผู้ให้บริการมีสิทธิ์ปฏิเสธเนื้อหาที่มีความเสี่ยงก่อให้เกิดความขัดแย้งทางผลประโยชน์ได้ทันที โดยผู้สนับสนุนไม่มีสิทธิ์เรียกร้องค่าเสียหาย</p>
+<p><strong>3.3</strong> หากพบเนื้อหาไปปรากฏในสำนักงานคู่แข่ง สปอนเซอร์แจ้งขอถอดถอนได้ทันที ผู้ให้บริการจะดำเนินการแก้ไขในเวลาอันสมควร</p>
+
+<h4>หมวดที่ 4: ข้อตกลงห้ามแข่งขัน (Non-Competition Agreement)</h4>
+<p><strong>4.1</strong> ห้ามนำโมเดลธุรกิจ ซอฟต์แวร์ ระบบ CMS หรือโครงข่ายไปใช้ทำธุรกิจแข่งขันไม่ว่าทางตรงหรือทางอ้อม — ห้ามใช้ประโยชน์จากข้อมูลตำแหน่งออฟฟิศ รายชื่อผู้ติดต่อ หรือข้อมูลวิเคราะห์นอกขอบเขตความร่วมมือ</p>
+<p><strong>4.2</strong> ห้ามติดต่อชักชวนพาร์ทเนอร์หรือบุคลากรของผู้ให้บริการโดยตรงในระหว่างสัญญาและหลังสิ้นสุดสัญญาตามระยะเวลาที่กำหนด</p>
+<p><strong>4.3</strong> การฝ่าฝืนข้อตกลงห้ามแข่งขัน ผู้ให้บริการมีสิทธิ์บอกเลิกสัญญาทันทีและเรียกค่าเสียหายที่เกิดขึ้นจริงรวมค่าใช้จ่ายทางกฎหมาย</p>
+
+<h4>หมวดที่ 5: กระบวนการตรวจสอบและบทลงโทษทั่วไป</h4>
+<p>ผู้ลงโฆษณาต้องส่งไฟล์คอนเทนต์ให้ตรวจสอบล่วงหน้าก่อนวันฉายจริง ผู้ให้บริการมีสิทธิ์ปฏิเสธการเผยแพร่ทันทีหากขัดต่อข้อกำหนด และมีอำนาจถอดถอนฉุกเฉิน (Emergency Kill-Switch) ได้โดยไม่ต้องแจ้งล่วงหน้าหากพบผลกระทบทางลบภายหลัง หากฝ่าฝืนซ้ำซ้อนผู้ให้บริการมีสิทธิ์ระงับบริการทันที</p>
+
+<h4>หมวดที่ 6: การรับรองสิทธิ์ในทรัพย์สินทางปัญญาของผู้ลงโฆษณา</h4>
+<p>ผู้ลงโฆษณารับรองและยืนยันว่าเนื้อหา ภาพ วิดีโอ ข้อความ เพลง หรือทรัพย์สินทางปัญญาใดๆ ที่อัปโหลดเข้าสู่ระบบ เป็นทรัพย์สินของตนเองหรือได้รับอนุญาตให้ใช้งานโดยถูกต้องตามกฎหมาย หากมีข้อพิพาทด้านลิขสิทธิ์หรือทรัพย์สินทางปัญญาเกิดขึ้นจากเนื้อหาที่อัปโหลด ผู้ลงโฆษณาต้องเป็นผู้รับผิดชอบแต่เพียงผู้เดียว และต้องชดใช้ค่าเสียหายที่เกิดขึ้นกับผู้ให้บริการหรือบุคคลที่สาม</p>
+
+<h4>หมวดที่ 7: การเก็บและการลบข้อมูลหลังสิ้นสุดสัญญา</h4>
+<p>เมื่อสัญญาสิ้นสุดหรือบัญชีถูกยกเลิกไม่ว่าด้วยเหตุใด ผู้ให้บริการจะเก็บรักษาข้อมูลบัญชี ประวัติการจอง และไฟล์เนื้อหาไว้ต่ออีกระยะเวลาหนึ่งตามความจำเป็นทางบัญชีและกฎหมาย หลังจากนั้นข้อมูลจะถูกลบออกจากระบบตามรอบการดูแลระบบตามปกติ ผู้ลงโฆษณาสามารถร้องขอสำเนาข้อมูลหรือขอให้ลบข้อมูลก่อนกำหนดได้โดยติดต่อทีมงาน ทั้งนี้ข้อมูลบางส่วนอาจต้องเก็บไว้ต่อตามที่กฎหมายกำหนด</p>
+
+<h4>หมวดที่ 8: ข้อจำกัดความรับผิดของผู้ให้บริการ</h4>
+<p>ผู้ให้บริการจะดำเนินการด้วยความระมัดระวังตามสมควรในการให้บริการระบบ แต่ไม่รับประกันว่าระบบจะทำงานได้อย่างต่อเนื่องปราศจากข้อผิดพลาดตลอดเวลา ผู้ให้บริการไม่รับผิดชอบต่อความเสียหายทางอ้อม การสูญเสียโอกาสทางธุรกิจ หรือความเสียหายที่เกิดจากเหตุสุดวิสัยที่อยู่นอกเหนือการควบคุม ความรับผิดของผู้ให้บริการในทุกกรณีจะไม่เกินมูลค่าที่ผู้ลงโฆษณาชำระจริงสำหรับการจองที่เกี่ยวข้อง</p>
+
+<h4>หมวดที่ 9: การเปลี่ยนแปลงข้อกำหนด</h4>
+<p>ผู้ให้บริการสงวนสิทธิ์ในการปรับปรุงหรือเปลี่ยนแปลงข้อกำหนดฉบับนี้ได้ตามความเหมาะสม โดยจะแจ้งให้ผู้ลงโฆษณาทราบล่วงหน้าผ่านช่องทางที่ลงทะเบียนไว้ (เช่น อีเมล หรือประกาศในระบบ) ก่อนมีผลบังคับใช้ตามระยะเวลาอันสมควร การใช้งานระบบต่อไปหลังการเปลี่ยนแปลงมีผลบังคับใช้ ถือว่าผู้ลงโฆษณายอมรับข้อกำหนดฉบับใหม่แล้ว</p>
+`;
+
+function renderSignupPage(error, formValues) {
+  const v = (name) => (formValues ? (formValues.get(name) || '') : '');
   return `<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -712,33 +798,78 @@ function renderSignupPage(error) {
   button { width: 100%; background: #1b1f27; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; cursor: pointer; margin-top: 20px; }
   .error { color: #e76f51; font-size: 13px; margin-bottom: 12px; }
   .link { text-align: center; margin-top: 16px; font-size: 13px; }
+  .terms-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; font-size: 13px; }
+  .terms-row input { width: auto; margin-top: 2px; }
+  .terms-link { color: #2a78d6; text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; padding: 24px; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: white; border-radius: 12px; max-width: 640px; width: 100%; max-height: 80vh; display: flex; flex-direction: column; }
+  .modal-header { padding: 16px 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
+  .modal-header h2 { font-size: 16px; margin: 0; }
+  .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #6b7280; width: auto; margin: 0; padding: 0; }
+  .modal-body { padding: 20px; overflow-y: auto; font-size: 13px; line-height: 1.6; color: #374151; }
+  .modal-body h3 { font-size: 15px; margin: 0 0 8px; }
+  .modal-body h4 { font-size: 13px; margin: 16px 0 6px; color: #1b1f27; }
+  .modal-body p { margin: 0 0 8px; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid #e5e7eb; }
+  .modal-footer button { margin-top: 0; }
 </style>
 </head>
 <body>
   <div class="card">
     <h1>สมัครสมาชิก Sponsor</h1>
     ${error ? `<p class="error">${error}</p>` : ''}
-    <form method="POST" action="/api/sponsor/action?action=signup">
+    <form method="POST" action="/api/sponsor/action?action=signup" id="signupForm">
       <label>ชื่อบริษัท *</label>
-      <input type="text" name="company_name" required />
+      <input type="text" name="company_name" value="${v('company_name')}" required />
       <label>เลขประจำตัวผู้เสียภาษี</label>
-      <input type="text" name="tax_id" />
+      <input type="text" name="tax_id" value="${v('tax_id')}" />
       <label>ที่อยู่บริษัท</label>
-      <input type="text" name="address" />
+      <input type="text" name="address" value="${v('address')}" />
       <label>ชื่อผู้ติดต่อ</label>
-      <input type="text" name="contact_name" />
+      <input type="text" name="contact_name" value="${v('contact_name')}" />
       <label>เบอร์โทรติดต่อ</label>
-      <input type="text" name="contact_phone" />
+      <input type="text" name="contact_phone" value="${v('contact_phone')}" />
       <label>ประเภทธุรกิจ</label>
-      <input type="text" name="business_type" />
+      <input type="text" name="business_type" value="${v('business_type')}" />
       <label>อีเมล (ใช้ login) *</label>
-      <input type="email" name="email" required />
+      <input type="email" name="email" value="${v('email')}" required />
       <label>รหัสผ่าน *</label>
       <input type="password" name="password" required minlength="6" />
+
+      <div class="terms-row">
+        <input type="checkbox" name="agree_terms" id="agreeTerms" required />
+        <label for="agreeTerms" style="margin:0;">
+          ฉันได้อ่านและยอมรับ<button type="button" class="terms-link" onclick="openTerms()">ข้อกำหนดและนโยบายการแสดงผลเนื้อหา</button>
+        </label>
+      </div>
+
       <button type="submit">สมัครสมาชิก</button>
     </form>
     <p class="link">มีบัญชีอยู่แล้ว? <a href="/api/sponsor/action?action=login">เข้าสู่ระบบ</a></p>
   </div>
+
+  <div class="modal-overlay" id="termsModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>ข้อกำหนดและนโยบายการแสดงผลเนื้อหา</h2>
+        <button type="button" class="modal-close" onclick="closeTerms()">&times;</button>
+      </div>
+      <div class="modal-body">${TERMS_CONTENT}</div>
+      <div class="modal-footer">
+        <button type="button" onclick="closeTerms()">ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function openTerms() { document.getElementById('termsModal').classList.add('open'); }
+    function closeTerms() { document.getElementById('termsModal').classList.remove('open'); }
+    document.getElementById('termsModal').addEventListener('click', (e) => {
+      if (e.target.id === 'termsModal') closeTerms();
+    });
+  </script>
 </body>
 </html>`;
 }
