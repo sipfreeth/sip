@@ -6,8 +6,8 @@
 //   GET      /api/office/action?action=logout           — logout
 //   GET/POST /api/office/action?action=forgot_password  — ขอลิงก์รีเซ็ตรหัสผ่านทางอีเมล
 //   GET/POST /api/office/action?action=reset_password   — ตั้งรหัสผ่านใหม่จากลิงก์
-//   POST     /api/office/action?action=get_upload_url   — ขอ signed URL อัปโหลดไฟล์ (ระบุ ?slot=1/2/3)
-//   POST     /api/office/action?action=save_content     — บันทึกข้อมูลหลังอัปโหลดเสร็จ (ระบุ ?slot=1/2/3)
+//   POST     /api/office/action?action=get_upload_url   — ขอ signed URL อัปโหลดไฟล์ (ระบุ ?slot=1-6)
+//   POST     /api/office/action?action=save_content     — บันทึกข้อมูลหลังอัปโหลดเสร็จ (ระบุ ?slot=1-6)
 
 import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
@@ -188,7 +188,7 @@ export default async function handler(req, res) {
   }
 
   const slot = Number(req.query.slot);
-  if (![1, 2, 3].includes(slot)) {
+  if (![1, 2, 3, 4, 5, 6].includes(slot)) {
     res.status(400).send('slot ไม่ถูกต้อง');
     return;
   }
