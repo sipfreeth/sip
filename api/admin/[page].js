@@ -1039,7 +1039,10 @@ async function renderSponsorsTab(admin, query) {
 
       const bookingRows = (bookings.data || [])
         .map((b) => {
-          const payLabel = { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'คืนเงินแล้ว' }[b.payment_status] || b.payment_status;
+          const payLabel =
+            b.payment_status === 'refunded' && b.approval_status === 'rejected'
+              ? 'ยกเลิก (ไม่ผ่านการตรวจสอบ)'
+              : { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'คืนเงินแล้ว' }[b.payment_status] || b.payment_status;
           const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
           const reasonLine = b.approval_status === 'rejected' && b.rejection_reason ? `<div class="hint" style="color:#e76f51;">เหตุผล: ${b.rejection_reason}</div>` : '';
           const updatedLine = `<div class="hint">แก้ไขล่าสุด: ${new Date(b.updated_at).toLocaleString('th-TH')}</div>`;
@@ -1115,10 +1118,11 @@ async function renderSponsorsTab(admin, query) {
   const bookingRows = allBookings
     .map((b) => {
       const isPaid = b.payment_status === 'paid';
+      const isRejectedReleased = b.payment_status === 'refunded' && b.approval_status === 'rejected';
       const isExpired = b.payment_status === 'unpaid' && (!b.reserved_until || new Date(b.reserved_until) < new Date());
       const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
       return `
-        <tr style="${isExpired ? 'opacity:0.5;' : ''}">
+        <tr style="${isExpired || isRejectedReleased ? 'opacity:0.5;' : ''}">
           <td>${b.sponsors?.company_name || '-'} <span class="hint">(${b.sponsors?.sponsor_code || '-'})</span></td>
           <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
           <td>${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
@@ -1128,6 +1132,8 @@ async function renderSponsorsTab(admin, query) {
             ${
               isPaid
                 ? '<span class="badge-used">ชำระแล้ว</span>'
+                : isRejectedReleased
+                ? '<span class="hint">ไม่ผ่านตรวจสอบ — คืน Slot แล้ว</span>'
                 : isExpired
                 ? '<span class="hint">หมดเวลาแล้ว — Slot คืนให้จองใหม่ได้แล้ว</span>'
                 : `<form method="POST" action="/api/admin/action?action=booking_mark_paid" style="display:inline;">
