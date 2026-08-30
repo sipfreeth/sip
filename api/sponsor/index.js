@@ -22,7 +22,7 @@ import {
   MAX_VIDEO_MB,
   MAX_VIDEO_SECONDS,
 } from '../../lib/sponsorArea.js';
-import { listCustomerCards, isPromptPayConfigured, getPromptPayQrImageUrl } from '../../lib/payments.js';
+import { listCustomerCards, isPromptPayConfigured, getPromptPayQrImageUrl, SUPPORTED_BANKS } from '../../lib/payments.js';
 
 const PAGES = ['content', 'book', 'bookings', 'profile'];
 
@@ -452,8 +452,9 @@ async function renderPaymentStep(sponsor, group) {
       <p id="remainingAmount" style="font-size:14px; font-weight:600;">ยอดที่ต้องชำระ: ${totalPrice.toLocaleString()} บาท</p>
 
       <div id="paymentMethods" style="${creditBalance >= totalPrice ? 'display:none;' : ''}">
-        <div style="display:flex; gap:8px; margin-bottom:16px;">
+        <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
           <button type="button" class="btn-small" onclick="showTab('card')">บัตรเครดิต/เดบิต</button>
+          <button type="button" class="btn-small" onclick="showTab('bank')">ธนาคารออนไลน์</button>
           <button type="button" class="btn-small" onclick="showTab('transfer')">โอนเงิน / PromptPay</button>
         </div>
 
@@ -461,20 +462,21 @@ async function renderPaymentStep(sponsor, group) {
           ${savedCardsHtml}
           <label style="display:block; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:6px; cursor:pointer;">
             <input type="radio" name="card_choice" value="__new__" ${cardInfo.cards.length ? '' : 'checked'} />
-            เพิ่มบัตรใหม่
+            เพิ่มบัตรใหม่ (กรอกผ่านหน้าต่างที่ปลอดภัยของ Omise)
           </label>
-          <div id="card-form" style="display:${cardInfo.cards.length ? 'none' : 'block'};">
-            <input type="text" id="card-name" placeholder="ชื่อบนบัตร" />
-            <input type="text" id="card-number" placeholder="หมายเลขบัตร" style="margin-top:8px;" />
-            <div style="display:flex; gap:8px; margin-top:8px;">
-              <input type="text" id="card-expmonth" placeholder="MM" style="width:60px;" />
-              <input type="text" id="card-expyear" placeholder="YYYY" style="width:80px;" />
-              <input type="text" id="card-cvv" placeholder="CVV" style="width:80px;" />
-            </div>
-            <label style="display:block; margin-top:8px; font-size:13px;"><input type="checkbox" id="save-card" checked /> บันทึกบัตรนี้ไว้ใช้ครั้งหน้า</label>
-          </div>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:13px;">
+            <input type="checkbox" id="save-card" checked /> บันทึกบัตรนี้ไว้ใช้ครั้งหน้า
+          </label>
           <button type="button" class="btn-primary" style="margin-top:12px;" onclick="payByCard()">ชำระด้วยบัตร</button>
           <p id="card-status" class="hint" style="margin-top:8px;"></p>
+        </div>
+
+        <div id="tab-bank" style="display:none;">
+          <p class="hint">เลือกธนาคารเพื่อไปหน้า Login ของธนาคารและยืนยันการชำระเงิน (ไม่ต้องผูกบัญชีถาวร)</p>
+          <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px; max-width:320px;">
+            ${SUPPORTED_BANKS.map((b) => `<button type="button" class="btn-small" style="text-align:left;" onclick="payByBank('${b.code}')">${b.label}</button>`).join('')}
+          </div>
+          <p id="bank-status" class="hint" style="margin-top:8px;"></p>
         </div>
 
         <div id="tab-transfer" style="display:none;">
@@ -536,6 +538,7 @@ async function renderPaymentStep(sponsor, group) {
 
       function showTab(name) {
         document.getElementById('tab-card').style.display = name === 'card' ? 'block' : 'none';
+        document.getElementById('tab-bank').style.display = name === 'bank' ? 'block' : 'none';
         document.getElementById('tab-transfer').style.display = name === 'transfer' ? 'block' : 'none';
         if (name === 'transfer' && promptPayReady) updateRemaining();
       }
@@ -553,6 +556,22 @@ async function renderPaymentStep(sponsor, group) {
         else { statusEl.textContent = 'เกิดข้อผิดพลาด: ' + (data.error || ''); }
       }
 
+      async function payByBank(bankCode) {
+        const statusEl = document.getElementById('bank-status');
+        statusEl.textContent = 'กำลังพาไปหน้าธนาคาร...';
+        const res = await fetch('/api/sponsor/action?action=pay_by_bank', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ group_id: groupId, bank_code: bankCode, credit_to_apply: String(getCreditToApply()) }).toString(),
+        });
+        const data = await res.json();
+        if (data.redirect) { window.location.href = data.redirect; return; }
+        if (data.paid) { statusEl.textContent = 'ชำระเงินสำเร็จ กำลังพาไปหน้ารายการจอง...'; setTimeout(() => window.location.href = '/api/sponsor?page=bookings', 1000); return; }
+        statusEl.textContent = 'เกิดข้อผิดพลาด: ' + (data.message || data.error || '');
+      }
+
+      // ใช้หน้าต่างกรอกบัตรสำเร็จรูปของ Omise เอง (OmiseCard.open) — หน้าตาเหมือนระบบชำระเงินมาตรฐานทั่วไป
+      // เว้นวรรคเลขบัตรอัตโนมัติ 4-4-4-4 มีไอคอนประเภทบัตร ตรวจสอบความถูกต้องให้ในตัว ข้อมูลบัตรไม่ผ่านเซิร์ฟเวอร์เราเลย
       function payByCard() {
         const statusEl = document.getElementById('card-status');
         const chosen = document.querySelector('input[name="card_choice"]:checked');
@@ -572,30 +591,26 @@ async function renderPaymentStep(sponsor, group) {
           return;
         }
 
-        statusEl.textContent = 'กำลังส่งข้อมูลบัตร...';
-        OmiseCard.createToken('card', {
-          name: document.getElementById('card-name').value,
-          number: document.getElementById('card-number').value,
-          expiration_month: document.getElementById('card-expmonth').value,
-          expiration_year: document.getElementById('card-expyear').value,
-          security_code: document.getElementById('card-cvv').value,
-        }, async (statusCode, response) => {
-          if (statusCode !== 200) {
-            statusEl.textContent = 'ข้อมูลบัตรไม่ถูกต้อง: ' + (response.message || '');
-            return;
-          }
-          statusEl.textContent = 'กำลังทำรายการชำระเงิน...';
-          const saveCard = document.getElementById('save-card')?.checked ? '1' : '0';
-          const res = await fetch('/api/sponsor/action?action=pay_by_card', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ group_id: groupId, omise_token: response.id, save_card: saveCard, credit_to_apply: String(creditToApply) }).toString(),
-          });
-          const data = await res.json();
-          if (!res.ok) { statusEl.textContent = 'เกิดข้อผิดพลาด: ' + (data.error || ''); return; }
-          if (data.redirect) { window.location.href = data.redirect; return; }
-          if (data.paid) { statusEl.textContent = 'ชำระเงินสำเร็จ กำลังพาไปหน้ารายการจอง...'; setTimeout(() => window.location.href = '/api/sponsor?page=bookings', 1000); return; }
-          statusEl.textContent = 'การชำระเงินไม่สำเร็จ กรุณาลองใหม่หรือใช้บัตรอื่น';
+        OmiseCard.open({
+          amount: Math.round((totalPrice - creditToApply) * 100),
+          currency: 'THB',
+          defaultPaymentMethod: 'credit_card',
+          onCreateTokenSuccess: async (nonce) => {
+            // nonce เป็น token (ขึ้นต้นด้วย tokn_) หรือ source (ขึ้นต้นด้วย src_) แล้วแต่วิธีที่ลูกค้าเลือกในป๊อปอัป
+            statusEl.textContent = 'กำลังทำรายการชำระเงิน...';
+            const saveCard = document.getElementById('save-card')?.checked ? '1' : '0';
+            const res = await fetch('/api/sponsor/action?action=pay_by_card', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ group_id: groupId, omise_token: nonce, save_card: saveCard, credit_to_apply: String(creditToApply) }).toString(),
+            });
+            const data = await res.json();
+            if (!res.ok) { statusEl.textContent = 'เกิดข้อผิดพลาด: ' + (data.error || ''); return; }
+            if (data.redirect) { window.location.href = data.redirect; return; }
+            if (data.paid) { statusEl.textContent = 'ชำระเงินสำเร็จ กำลังพาไปหน้ารายการจอง...'; setTimeout(() => window.location.href = '/api/sponsor?page=bookings', 1000); return; }
+            statusEl.textContent = 'การชำระเงินไม่สำเร็จ กรุณาลองใหม่หรือใช้บัตรอื่น';
+          },
+          onFormClosed: () => {},
         });
       }
 
