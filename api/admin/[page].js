@@ -811,7 +811,8 @@ async function renderPlaybackStats(officeAccountId) {
   weekStart.setDate(todayStart.getDate() - dayOfWeek);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const bySlot = { 1: { today: 0, week: 0, month: 0, all: 0 }, 2: { today: 0, week: 0, month: 0, all: 0 }, 3: { today: 0, week: 0, month: 0, all: 0 } };
+  const bySlot = {};
+  for (let i = 1; i <= 6; i++) bySlot[i] = { today: 0, week: 0, month: 0, all: 0 };
   for (const row of rows) {
     const slot = bySlot[row.slot_number];
     if (!slot) continue;
@@ -822,7 +823,7 @@ async function renderPlaybackStats(officeAccountId) {
     if (playedAt >= todayStart) slot.today++;
   }
 
-  const slotRows = [1, 2, 3]
+  const slotRows = [1, 2, 3, 4, 5, 6]
     .map(
       (n) => `
         <tr>
@@ -892,7 +893,7 @@ function renderOfficeAccountManagement(offices) {
           </td>
           <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>
           <td style="text-align:center;">
-            <form method="POST" action="/api/admin/action?action=office_account_delete" onsubmit="return confirm('ลบบัญชี Office นี้? Content ทั้ง 3 Slot จะหายไปด้วย')" style="display:inline;">
+            <form method="POST" action="/api/admin/action?action=office_account_delete" onsubmit="return confirm('ลบบัญชี Office นี้? Content ทุก Slot จะหายไปด้วย')" style="display:inline;">
               <input type="hidden" name="office_id" value="${o.id}" />
               <button class="btn-small btn-danger">ลบ</button>
             </form>
