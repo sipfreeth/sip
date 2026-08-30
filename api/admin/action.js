@@ -535,17 +535,21 @@ export default async function handler(req, res) {
     await updateBookingApproval(bookingId, decision, admin.username, reason);
 
     if (decision === 'rejected') {
-      // เนื้อหาไม่ผ่านอนุมัติ → ยกเลิก Slot นี้ ไม่คืนเงินสด แต่คืนเป็นเครดิตแทน (ใช้จองครั้งต่อไปได้ อายุ 1 ปี)
+      // เนื้อหาไม่ผ่านอนุมัติ → ยกเลิก Slot นี้ทันที ไม่ว่าจะจ่ายเงินไปแล้วหรือยังก็ตาม
+      // ถ้าจ่ายเงินไปแล้ว คืนเป็นเครดิตแทน (ใช้จองครั้งต่อไปได้ อายุ 1 ปี) — ถ้ายังไม่จ่าย ไม่มีอะไรต้องคืน แค่ปล่อย slot
       const { data: booking } = await supabase
         .from('slot_bookings')
         .select('sponsor_id, price, payment_status')
         .eq('id', bookingId)
         .single();
 
-      if (booking && booking.payment_status === 'paid') {
-        await grantSponsorCredit(booking.sponsor_id, booking.price, `rejected_booking:${bookingId}`);
+      if (booking) {
+        if (booking.payment_status === 'paid') {
+          await grantSponsorCredit(booking.sponsor_id, booking.price, `rejected_booking:${bookingId}`);
+        }
+        // ตั้งเป็น 'refunded' เสมอไม่ว่าจะจ่ายเงินไปแล้วหรือยัง — สถานะนี้คือตัวที่ทำให้ getAvailability() ปล่อย slot คืนทันที
+        // (ไม่รอให้ครบ 15 นาทีหมดเวลาเองตามธรรมชาติ กันปัญหา slot ค้างจากการตรวจสอบไม่ผ่าน)
         await supabase.from('slot_bookings').update({ payment_status: 'refunded' }).eq('id', bookingId);
-        // payment_status = 'refunded' ที่นี่หมายถึง "คืนเป็นเครดิตแล้ว" (ไม่ใช่คืนเงินสดจริง) — Slot จะว่างกลับมาให้จองใหม่ได้ทันที
       }
     }
 
