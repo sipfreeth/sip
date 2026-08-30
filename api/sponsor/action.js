@@ -437,7 +437,7 @@ export default async function handler(req, res) {
         threadType: 'sponsor',
         threadId: sponsor.id,
         senderType: 'sponsor',
-        senderLabel: sponsor.company_name,
+        senderLabel: `Sponsor ${sponsor.company_name}`,
         message: params.get('message'),
       });
     } catch (err) {
