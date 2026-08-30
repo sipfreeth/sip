@@ -30,6 +30,7 @@ import { requireAdmin, requirePermission, can, createSessionCookie, clearSession
 import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
 import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
 import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
+import { toCsv, sendCsv } from '../../lib/csv.js';
 
 async function readBody(req) {
   let body = '';
@@ -95,6 +96,81 @@ export default async function handler(req, res) {
     await markThreadRead(threadType, threadId, 'admin');
     res.setHeader('Content-Type', 'application/json');
     res.status(200).json({ messages });
+    return;
+  }
+
+  // ---------- Export CSV (GET ทั้งหมด — กด "Export" แล้วดาวน์โหลดทันที) ----------
+  if (actionParam === 'export_scans' && req.method === 'GET') {
+    const { data } = await supabase.from('scan_logs').select('creative_id, screen_id, scanned_at').order('scanned_at', { ascending: false });
+    const csv = toCsv(data || [], [
+      { key: 'creative_id', label: 'Campaign' },
+      { key: 'screen_id', label: 'Screen ID' },
+      { get: (r) => new Date(r.scanned_at).toLocaleString('th-TH'), label: 'เวลาที่สแกน' },
+    ]);
+    sendCsv(res, `scans-${Date.now()}.csv`, csv);
+    return;
+  }
+
+  if (actionParam === 'export_playback' && req.method === 'GET') {
+    const officeId = req.query.office;
+    let query = supabase
+      .from('content_play_logs')
+      .select('office_account_id, slot_number, screen_id, content_label, played_at, office_accounts(office_name)')
+      .order('played_at', { ascending: false });
+    if (officeId) query = query.eq('office_account_id', officeId);
+    const { data } = await query;
+    const csv = toCsv(data || [], [
+      { get: (r) => r.office_accounts?.office_name || '-', label: 'Office' },
+      { key: 'slot_number', label: 'Slot' },
+      { key: 'screen_id', label: 'Screen ID' },
+      { key: 'content_label', label: 'ไฟล์ที่เล่น' },
+      { get: (r) => new Date(r.played_at).toLocaleString('th-TH'), label: 'เวลาที่เล่น' },
+    ]);
+    sendCsv(res, `playback-${Date.now()}.csv`, csv);
+    return;
+  }
+
+  if (actionParam === 'export_bookings' && req.method === 'GET') {
+    const { data } = await supabase
+      .from('slot_bookings')
+      .select(
+        'slot_number, week_start, price, payment_status, payment_method, approval_status, rejection_reason, created_at, sponsors(company_name, sponsor_code), office_accounts(office_name), sponsor_content(file_name)'
+      )
+      .order('created_at', { ascending: false });
+    const csv = toCsv(data || [], [
+      { get: (r) => r.sponsors?.company_name || '-', label: 'Sponsor' },
+      { get: (r) => r.sponsors?.sponsor_code || '-', label: 'Sponsor Code' },
+      { get: (r) => r.office_accounts?.office_name || '-', label: 'Office' },
+      { key: 'slot_number', label: 'Slot' },
+      { get: (r) => new Date(r.week_start).toLocaleDateString('th-TH'), label: 'สัปดาห์' },
+      { get: (r) => r.sponsor_content?.file_name || '-', label: 'ไฟล์' },
+      { key: 'price', label: 'ราคา' },
+      { key: 'payment_status', label: 'สถานะจ่ายเงิน' },
+      { key: 'payment_method', label: 'วิธีชำระ' },
+      { key: 'approval_status', label: 'สถานะตรวจสอบ' },
+      { key: 'rejection_reason', label: 'เหตุผลไม่ผ่าน' },
+      { get: (r) => new Date(r.created_at).toLocaleString('th-TH'), label: 'วันที่จอง' },
+    ]);
+    sendCsv(res, `bookings-${Date.now()}.csv`, csv);
+    return;
+  }
+
+  if (actionParam === 'export_redemptions' && req.method === 'GET') {
+    const { data } = await supabase
+      .from('redemptions')
+      .select('points_spent, status, shipping_status, created_at, recipient_name, recipient_phone, rewards(name), members(display_name, line_user_id)')
+      .order('created_at', { ascending: false });
+    const csv = toCsv(data || [], [
+      { get: (r) => r.members?.display_name || r.members?.line_user_id || '-', label: 'สมาชิก' },
+      { get: (r) => r.rewards?.name || '-', label: 'ของรางวัล' },
+      { key: 'points_spent', label: 'Point' },
+      { key: 'status', label: 'สถานะ' },
+      { key: 'shipping_status', label: 'สถานะจัดส่ง' },
+      { key: 'recipient_name', label: 'ชื่อผู้รับ' },
+      { key: 'recipient_phone', label: 'เบอร์โทร' },
+      { get: (r) => new Date(r.created_at).toLocaleString('th-TH'), label: 'วันที่แลก' },
+    ]);
+    sendCsv(res, `redemptions-${Date.now()}.csv`, csv);
     return;
   }
 
