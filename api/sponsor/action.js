@@ -14,6 +14,7 @@
 //   POST     ?action=update_booking_content — เปลี่ยนไฟล์ที่แสดงของสล็อตที่จองไว้
 //   POST     ?action=cancel_booking      — ยกเลิกสล็อตที่ยังไม่ชำระเงิน
 //   POST     ?action=pay_by_card         — ชำระด้วยบัตร (Omise)
+//   POST     ?action=pay_by_bank         — ชำระผ่านธนาคารออนไลน์ (Omise Internet Banking)
 //   GET      ?action=omise_return        — จุดที่ Omise redirect กลับมาหลัง 3D Secure
 //   POST     ?action=omise_webhook       — Omise ยิงมายืนยันผลการชำระ (ไม่ต้อง login เพราะ Omise เรียกเอง)
 //   POST     ?action=get_slip_upload_url — ขอ signed URL อัปโหลดสลิปโอนเงิน
@@ -32,7 +33,7 @@ import {
   createSlipUploadTarget,
   downloadSlipBytes,
 } from '../../lib/sponsorArea.js';
-import { createOmiseCharge, getOmiseCharge, verifySlipWithSlipOK, createOmiseCustomer, attachCardToCustomer, listCustomerCards, setDefaultCard, deleteCustomerCard, getPromptPayQrImageUrl } from '../../lib/payments.js';
+import { createOmiseCharge, getOmiseCharge, verifySlipWithSlipOK, createOmiseCustomer, attachCardToCustomer, listCustomerCards, setDefaultCard, deleteCustomerCard, getPromptPayQrImageUrl, createOmiseBankCharge, SUPPORTED_BANKS } from '../../lib/payments.js';
 import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorArea.js';
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
@@ -500,6 +501,61 @@ export default async function handler(req, res) {
       }
 
       res.status(200).json({ paid: false, message: charge.failure_message || 'การชำระเงินไม่สำเร็จ' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+    return;
+  }
+
+  // ---------- ชำระผ่านธนาคารออนไลน์ (Omise Internet Banking) — ครั้งเดียว ไม่ผูกบัญชีถาวร ----------
+  if (actionParam === 'pay_by_bank') {
+    const groupId = params.get('group_id');
+    const group = await getBookingGroup(groupId, sponsor.id);
+    if (!group.length) {
+      res.status(404).json({ error: 'ไม่พบรายการจองนี้' });
+      return;
+    }
+    if (group[0].payment_status === 'paid') {
+      res.status(200).json({ paid: true });
+      return;
+    }
+    const totalPrice = group.reduce((sum, b) => sum + Number(b.price), 0);
+
+    const bankCode = params.get('bank_code');
+    if (!SUPPORTED_BANKS.some((b) => b.code === bankCode)) {
+      res.status(400).json({ error: 'ไม่รองรับธนาคารนี้' });
+      return;
+    }
+
+    const creditBalance = await getSponsorCreditBalance(sponsor.id);
+    const creditToApply = Math.min(Math.max(0, parseFloat(params.get('credit_to_apply')) || 0), creditBalance, totalPrice);
+    const amountToCharge = Math.round((totalPrice - creditToApply) * 100) / 100;
+
+    if (amountToCharge <= 0) {
+      // เครดิตครอบยอดเต็มพอดี ไม่ต้องผ่านธนาคารเลย
+      await spendSponsorCredit(sponsor.id, creditToApply, `used_for_booking_group:${groupId}`);
+      await supabase.from('slot_bookings').update({ payment_status: 'paid', payment_method: 'credit' }).eq('booking_group_id', groupId);
+      res.status(200).json({ paid: true });
+      return;
+    }
+
+    try {
+      const returnUri = `${process.env.APP_BASE_URL}/api/sponsor/action?action=omise_return&group_id=${groupId}&credit=${creditToApply}`;
+      const charge = await createOmiseBankCharge({
+        amountBaht: amountToCharge,
+        bankCode,
+        returnUri,
+        description: `Booking group ${groupId}`,
+      });
+
+      await supabase.from('slot_bookings').update({ omise_charge_id: charge.id }).eq('booking_group_id', groupId);
+
+      if (charge.authorize_uri) {
+        res.status(200).json({ redirect: charge.authorize_uri });
+        return;
+      }
+
+      res.status(200).json({ paid: false, message: 'ไม่ได้รับลิงก์ไปหน้าธนาคาร กรุณาลองใหม่' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
