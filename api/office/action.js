@@ -15,6 +15,7 @@ import { createOfficeSessionCookie, clearOfficeSessionCookie, requireOffice } fr
 import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
+import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 
 async function readBody(req) {
   let body = '';
@@ -135,6 +136,15 @@ export default async function handler(req, res) {
   const office = await requireOffice(req, res);
   if (!office) return;
 
+  // ---------- Poll แชท (GET เพื่อรีเฟรชข้อความถี่ๆ) ----------
+  if (actionParam === 'chat_poll' && req.method === 'GET') {
+    const messages = await getMessages('office', office.id);
+    await markThreadRead('office', office.id, 'party');
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({ messages });
+    return;
+  }
+
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
     return;
@@ -155,6 +165,25 @@ export default async function handler(req, res) {
     await supabase.from('office_accounts').update({ password_hash: hash }).eq('id', office.id);
     res.writeHead(302, { Location: '/api/office' });
     res.end();
+    return;
+  }
+
+  // ---------- แชทกับทีมงาน ----------
+  if (actionParam === 'chat_send') {
+    const params = await readBody(req);
+    try {
+      await sendMessage({
+        threadType: 'office',
+        threadId: office.id,
+        senderType: 'office',
+        senderLabel: office.office_name,
+        message: params.get('message'),
+      });
+    } catch (err) {
+      res.status(400).send(err.message);
+      return;
+    }
+    res.status(200).send('ok');
     return;
   }
 
