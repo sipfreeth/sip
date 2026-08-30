@@ -493,6 +493,8 @@ function renderPetCreatePage(member) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="/theme.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#ff5b2e" />
 <script src="/theme.js" defer></script>
 <title>สร้างสัตว์เลี้ยงของฉัน</title>
 <style>
@@ -561,6 +563,8 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="/theme.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#ff5b2e" />
 <script src="/theme.js" defer></script>
 <title>${pet.name || 'สัตว์เลี้ยงของฉัน'}</title>
 <style>
@@ -588,6 +592,7 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
   .closet-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; }
   .equip-btn { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
   .equip-btn.equipped { background: #06c755; color: white; border-color: #06c755; }
+  .notify-btn { width: 100%; background: #14161f; color: white; border: none; padding: 12px; border-radius: 10px; font-size: 13px; cursor: pointer; margin-top: 16px; }
 </style>
 </head>
 <body>
@@ -641,6 +646,8 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
         : ''
     }
 
+    <button id="notifyBtn" class="notify-btn">🔔 เปิดการแจ้งเตือนเมื่อสัตว์เลี้ยงหิว</button>
+
     <div class="link-row">
       <a href="/api/member-action?do=pet_shop">🛒 ร้านค้า (Point: ${spendableBalance.toLocaleString()})</a>
     </div>
@@ -686,6 +693,65 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
         window.location.reload();
       });
     });
+
+    // ---------- เปิดการแจ้งเตือน (PWA Push) ----------
+    const notifyBtn = document.getElementById('notifyBtn');
+    const VAPID_PUBLIC_KEY = ${JSON.stringify(process.env.VAPID_PUBLIC_KEY || '')};
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+    }
+
+    async function enableNotifications() {
+      if (!VAPID_PUBLIC_KEY) {
+        alert('ระบบแจ้งเตือนยังไม่พร้อมใช้งาน (ทีมงานยังไม่ได้ตั้งค่า)');
+        return;
+      }
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        alert('เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนแบบ Push');
+        return;
+      }
+      try {
+        const registration = await navigator.serviceWorker.register('/sw.js');
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          alert('คุณไม่ได้อนุญาตการแจ้งเตือน');
+          return;
+        }
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+        await fetch('/api/member-action?do=push_subscribe', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subscription),
+        });
+        notifyBtn.textContent = '🔔 เปิดการแจ้งเตือนแล้ว';
+        notifyBtn.disabled = true;
+      } catch (err) {
+        alert('เปิดการแจ้งเตือนไม่สำเร็จ: ' + err.message);
+      }
+    }
+
+    notifyBtn.addEventListener('click', enableNotifications);
+
+    // เช็คว่าเคย subscribe ไว้แล้วหรือยัง ถ้าเคยแล้วปรับปุ่มให้รู้
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration().then(async (reg) => {
+        if (reg) {
+          const sub = await reg.pushManager.getSubscription();
+          if (sub) {
+            notifyBtn.textContent = '🔔 เปิดการแจ้งเตือนแล้ว';
+            notifyBtn.disabled = true;
+          }
+        }
+      });
+    }
   </script>
 </body>
 </html>`;
