@@ -14,6 +14,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { getTier, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { createRedeemToken } from '../../lib/memberToken.js';
+import { getMemberPet, getPetInventory, getPetBadges, SPECIES_LIST } from '../../lib/petGame.js';
+import { createMemberSessionCookie } from '../../lib/memberAuth.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -186,6 +188,27 @@ export default async function handler(req, res) {
     const token = createRedeemToken(member.id, reward.id);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(renderShippingForm(reward, member, token, savedAddresses || []));
+    return;
+  }
+
+  // ทางที่ 3.5: มาจากลิงก์เกมเลี้ยงสัตว์ — ตั้ง Session Cookie ให้ด้วย เพื่อให้ปุ่มในเกมกดได้ไวๆ
+  // ไม่ต้อง Redirect ผ่าน LINE ทุกครั้งเหมือน Flow แต้ม/ของรางวัลเดิม (เกมกดถี่กว่ามาก)
+  if (parsedState.action === 'view_pet') {
+    const pet = await getMemberPet(member.id);
+    res.setHeader('Set-Cookie', createMemberSessionCookie(member.id));
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+    if (!pet) {
+      res.status(200).send(renderPetCreatePage(member));
+      return;
+    }
+
+    const [inventory, badges, spendableBalance] = await Promise.all([
+      getPetInventory(pet.id),
+      getPetBadges(pet.id),
+      getSpendableBalance(member.id),
+    ]);
+    res.status(200).send(renderPetDashboard(member, pet, inventory, badges, spendableBalance));
     return;
   }
 
@@ -445,6 +468,188 @@ function renderErrorPage(title, message) {
     <p style="font-size:18px; font-weight:700;">${title}</p>
     <p style="color:#6b7280;">${message}</p>
   </div>
+</body>
+</html>`;
+}
+
+// ---------- ระบบเกมเลี้ยงสัตว์ ----------
+
+const SPECIES_EMOJI = { cat: '🐱', dog: '🐶', bird: '🐦', monkey: '🐵' };
+const LEVEL_COLOR = { 1: '#a7f3d0', 2: '#93c5fd', 3: '#c4b5fd', 4: '#fde68a' };
+
+function renderPetCreatePage(member) {
+  const options = SPECIES_LIST.map(
+    (s) => `
+      <label class="species-option">
+        <input type="radio" name="species_id" value="${s.id}" required />
+        <span class="species-emoji">${SPECIES_EMOJI[s.id]}</span>
+        <span>${s.name}</span>
+      </label>`
+  ).join('');
+
+  return `<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="/theme.css" />
+<script src="/theme.js" defer></script>
+<title>สร้างสัตว์เลี้ยงของฉัน</title>
+<style>
+  body { font-family: sans-serif; background: #f7f8fa; margin: 0; padding: 24px; color: #1b1f27; }
+  .card { background: white; border-radius: 16px; padding: 24px; max-width: 420px; margin: 0 auto; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .hint { color: #6b7280; font-size: 13px; margin: 0 0 20px; }
+  .species-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .species-option { border: 2px solid #e5e7eb; border-radius: 12px; padding: 16px; text-align: center; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .species-option:has(input:checked) { border-color: #ff5b2e; background: #fff1ec; }
+  .species-option input { position: absolute; opacity: 0; }
+  .species-emoji { font-size: 40px; }
+  label.field { display: block; font-size: 13px; color: #6b7280; margin: 4px 0; }
+  input[type="text"] { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; }
+  button { width: 100%; background: #ff5b2e; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; cursor: pointer; margin-top: 16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>สร้างสัตว์เลี้ยงตัวแรกของคุณ 🎉</h1>
+    <p class="hint">เลี้ยงดูให้ดี ให้อาหาร เล่นด้วย จะโตขึ้นเรื่อยๆ</p>
+    <form id="createForm">
+      <div class="species-grid">${options}</div>
+      <label class="field">ตั้งชื่อสัตว์เลี้ยง (ไม่บังคับ)</label>
+      <input type="text" name="name" maxlength="20" placeholder="เช่น มะลิ" />
+      <button type="submit">เริ่มเลี้ยงเลย</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('createForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(e.target);
+      const res = await fetch('/api/member-action?do=pet_create', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(formData).toString(),
+      });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        alert(await res.text());
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
+  const config = { level2: 100, level3: 300, level4: 700 }; // แค่ใช้แสดงผล progress bar คร่าวๆ (ค่าจริงคำนวณฝั่งเซิร์ฟเวอร์)
+  const thresholds = { 1: 0, 2: config.level2, 3: config.level3, 4: config.level4 };
+  const nextThreshold = pet.isMaxLevel ? pet.exp : thresholds[pet.level + 1];
+  const currentThreshold = thresholds[pet.level];
+  const expProgress = pet.isMaxLevel ? 100 : Math.round(((pet.exp - currentThreshold) / (nextThreshold - currentThreshold)) * 100);
+
+  const badgeChips = badges
+    .map((b) => `<span class="badge-chip" title="${b.pet_badges?.description || ''}">🏅 ${b.pet_badges?.name_th}</span>`)
+    .join('');
+
+  const equippedItems = inventory.filter((i) => i.equipped);
+
+  return `<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="/theme.css" />
+<script src="/theme.js" defer></script>
+<title>${pet.name || 'สัตว์เลี้ยงของฉัน'}</title>
+<style>
+  body { font-family: sans-serif; background: #f7f8fa; margin: 0; padding: 24px; color: #1b1f27; }
+  .card { background: white; border-radius: 16px; padding: 24px; max-width: 420px; margin: 0 auto; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .pet-stage { text-align: center; padding: 24px; border-radius: 16px; margin-bottom: 16px; }
+  .pet-emoji { font-size: 72px; }
+  .pet-name { font-weight: 700; font-size: 18px; margin: 8px 0 2px; }
+  .pet-level { font-size: 12px; color: #6b7280; }
+  .bar-row { margin: 12px 0; }
+  .bar-label { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+  .bar-track { background: #f0f0f0; border-radius: 999px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width 0.3s; }
+  .btn-row { display: flex; gap: 8px; margin-top: 16px; }
+  .btn-row button { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; cursor: pointer; }
+  .btn-feed { background: #06c755; color: white; }
+  .btn-play { background: #ff5b2e; color: white; }
+  .btn-row button:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+  .status-msg { font-size: 13px; text-align: center; margin-top: 10px; min-height: 18px; }
+  .hungry-warning { background: #fff1ec; color: #e76f51; padding: 10px; border-radius: 8px; font-size: 13px; text-align: center; margin-bottom: 12px; }
+  .badge-chip { display: inline-block; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 10px; font-size: 12px; margin: 4px 4px 0 0; }
+  .link-row { text-align: center; margin-top: 16px; font-size: 13px; }
+  .link-row a { color: #2a78d6; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    ${pet.isHungry ? `<div class="hungry-warning">🍖 ${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! รีบให้อาหารหน่อยนะ</div>` : ''}
+
+    <div class="pet-stage" style="background:${LEVEL_COLOR[pet.level]};">
+      <div class="pet-emoji">${SPECIES_EMOJI[pet.species_id]}</div>
+      <div class="pet-name">${pet.name || pet.speciesName}</div>
+      <div class="pet-level">${pet.levelName} ${pet.isMaxLevel ? '⭐' : ''}</div>
+      ${equippedItems.length ? `<div style="margin-top:6px; font-size:12px;">${equippedItems.map((i) => i.pet_shop_items?.name).join(', ')}</div>` : ''}
+    </div>
+
+    <div class="bar-row">
+      <div class="bar-label"><span>ความอิ่ม</span><span>${pet.hunger}%</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pet.hunger}%; background:#06c755;"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-label"><span>ความสุข</span><span>${pet.happiness}%</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pet.happiness}%; background:#ff5b2e;"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-label"><span>EXP (${pet.levelName})</span><span>${pet.isMaxLevel ? 'สูงสุดแล้ว' : expProgress + '%'}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pet.isMaxLevel ? 100 : expProgress}%; background:#2a78d6;"></div></div>
+    </div>
+
+    <div class="btn-row">
+      <button id="feedBtn" class="btn-feed">🍚 ให้อาหาร</button>
+      <button id="playBtn" class="btn-play">🎾 เล่นด้วย</button>
+    </div>
+    <p id="statusMsg" class="status-msg"></p>
+
+    ${badgeChips ? `<div style="margin-top:12px;">${badgeChips}</div>` : ''}
+
+    <div class="link-row">
+      <a href="/api/member-action?do=pet_shop">🛒 ร้านค้า (Point: ${spendableBalance.toLocaleString()})</a>
+    </div>
+  </div>
+
+  <script>
+    const feedBtn = document.getElementById('feedBtn');
+    const playBtn = document.getElementById('playBtn');
+    const statusMsg = document.getElementById('statusMsg');
+
+    async function doAction(action, btn) {
+      btn.disabled = true;
+      statusMsg.textContent = 'กำลังทำรายการ...';
+      try {
+        const res = await fetch('/api/member-action?do=' + action, { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          statusMsg.textContent = data.error || 'เกิดข้อผิดพลาด';
+          btn.disabled = false;
+          return;
+        }
+        statusMsg.textContent = 'ได้ EXP +' + data.expGained + ' 🎉';
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) {
+        statusMsg.textContent = 'เกิดข้อผิดพลาด: ' + err.message;
+        btn.disabled = false;
+      }
+    }
+
+    feedBtn.addEventListener('click', () => doAction('pet_feed', feedBtn));
+    playBtn.addEventListener('click', () => doAction('pet_play', playBtn));
+  </script>
 </body>
 </html>`;
 }
