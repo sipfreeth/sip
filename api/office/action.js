@@ -176,7 +176,7 @@ export default async function handler(req, res) {
         threadType: 'office',
         threadId: office.id,
         senderType: 'office',
-        senderLabel: office.office_name,
+        senderLabel: `Office ${office.office_name}`,
         message: params.get('message'),
       });
     } catch (err) {
