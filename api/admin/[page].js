@@ -256,6 +256,7 @@ async function renderDashboardTab(filterCampaigns) {
 
     <div class="section">
       <h2>เปรียบเทียบยอดสแกนแยกตาม Campaign</h2>
+      <a href="/api/admin/action?action=export_scans" class="btn-small" style="display:inline-block; margin-bottom:8px;">📥 Export สแกนทั้งหมด (CSV)</a>
       <div style="position:relative; height:260px;"><canvas id="scanChart"></canvas></div>
     </div>
 
@@ -281,6 +282,7 @@ async function renderDashboardTab(filterCampaigns) {
 
     <div class="section">
       <h2>ประวัติการแลกของรางวัล / สถานะจัดส่ง (50 รายการล่าสุด)</h2>
+      <a href="/api/admin/action?action=export_redemptions" class="btn-small" style="display:inline-block; margin-bottom:8px;">📥 Export การแลกรางวัลทั้งหมด (CSV)</a>
       <table>
         <tr><th>วันที่</th><th>สมาชิก</th><th>ของรางวัล</th><th style="text-align:right;">Point</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะ</th></tr>
         ${redemptionRows || '<tr><td colspan="6" class="muted">ยังไม่มีการแลก</td></tr>'}
@@ -852,6 +854,7 @@ async function renderPlaybackStats(officeAccountId) {
   return `
     <div class="section">
       <h2>ยอดรอบการเล่นเนื้อหาจริงบนจอ (จาก CMS)</h2>
+      <a href="/api/admin/action?action=export_playback&office=${officeAccountId}" class="btn-small" style="display:inline-block; margin-bottom:8px;">📥 Export ยอดการเล่นของ Office นี้ (CSV)</a>
       <p class="hint">ข้อมูลนี้มาจาก CMS ภายนอกที่ยิง Webhook เข้ามาที่ /api/playback-log — ถ้ายังไม่เชื่อมต่อ CMS ตารางนี้จะว่างเปล่า</p>
       <table>
         <tr><th></th><th style="text-align:right;">วันนี้</th><th style="text-align:right;">สัปดาห์นี้</th><th style="text-align:right;">เดือนนี้</th><th style="text-align:right;">ทั้งหมด</th></tr>
@@ -938,7 +941,7 @@ async function renderSponsorsTab(admin, query) {
     getPendingBookings(),
     supabase
       .from('slot_bookings')
-      .select('id, slot_number, week_start, price, payment_status, approval_status, payment_method, payment_reference, payment_slip_path, created_at, sponsors(company_name, sponsor_code), office_accounts(office_name), sponsor_content(file_name)')
+      .select('id, slot_number, week_start, price, payment_status, approval_status, payment_method, payment_reference, payment_slip_path, reserved_until, created_at, sponsors(company_name, sponsor_code), office_accounts(office_name), sponsor_content(file_name)')
       .order('week_start', { ascending: true })
       .limit(50),
   ]);
@@ -1112,9 +1115,10 @@ async function renderSponsorsTab(admin, query) {
   const bookingRows = allBookings
     .map((b) => {
       const isPaid = b.payment_status === 'paid';
+      const isExpired = b.payment_status === 'unpaid' && (!b.reserved_until || new Date(b.reserved_until) < new Date());
       const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
       return `
-        <tr>
+        <tr style="${isExpired ? 'opacity:0.5;' : ''}">
           <td>${b.sponsors?.company_name || '-'} <span class="hint">(${b.sponsors?.sponsor_code || '-'})</span></td>
           <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
           <td>${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
@@ -1124,6 +1128,8 @@ async function renderSponsorsTab(admin, query) {
             ${
               isPaid
                 ? '<span class="badge-used">ชำระแล้ว</span>'
+                : isExpired
+                ? '<span class="hint">หมดเวลาแล้ว — Slot คืนให้จองใหม่ได้แล้ว</span>'
                 : `<form method="POST" action="/api/admin/action?action=booking_mark_paid" style="display:inline;">
                      <input type="hidden" name="booking_id" value="${b.id}" />
                      <button class="btn-small">ยืนยันรับเงิน</button>
@@ -1132,9 +1138,9 @@ async function renderSponsorsTab(admin, query) {
           </td>
           <td style="text-align:center;">${approvalLabel}</td>
           <td style="text-align:center;">
-            <form method="POST" action="/api/admin/action?action=booking_cancel" onsubmit="return confirm('ยกเลิกการจองนี้?')" style="display:inline;">
+            <form method="POST" action="/api/admin/action?action=booking_cancel" onsubmit="return confirm('ลบรายการนี้ทิ้งถาวร?')" style="display:inline;">
               <input type="hidden" name="booking_id" value="${b.id}" />
-              <button class="btn-small btn-danger">ยกเลิก</button>
+              <button class="btn-small btn-danger">${isExpired ? 'ลบทิ้ง' : 'ยกเลิก'}</button>
             </form>
           </td>
         </tr>`;
@@ -1158,6 +1164,7 @@ async function renderSponsorsTab(admin, query) {
     ${detailSection}
     <div class="section">
       <h2>การจองทั้งหมด (ภาพรวม)</h2>
+      <a href="/api/admin/action?action=export_bookings" class="btn-small" style="display:inline-block; margin-bottom:8px;">📥 Export ประวัติการจองทั้งหมด (CSV)</a>
       <table>
         <tr><th>Sponsor</th><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th><th></th></tr>
         ${bookingRows || '<tr><td colspan="8" class="muted">ยังไม่มีการจอง</td></tr>'}
