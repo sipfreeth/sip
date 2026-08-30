@@ -261,15 +261,48 @@ async function renderBookTab(sponsor, query) {
       <h2>3. เลือก Slot และไฟล์ที่จะแสดง (เลือกได้หลาย Slot พร้อมกัน แต่ละอันเลือกไฟล์แยกกันได้)</h2>
       <p class="hint">ว่าง ${availableCount}/${slotCount} slot ในสัปดาห์นี้ — ราคา ${Number(activeOffice.price_per_week).toLocaleString()} บาท/slot</p>
       <p class="hint">หลังจองและชำระเงินแล้ว ทีมงานจะตรวจสอบไฟล์ที่เลือกอีกครั้งก่อนส่งขึ้นจอจริง</p>
+      <p style="font-size:13px; color:#e76f51; font-weight:600; margin-top:8px;">⚠️ หากยืนยันการจองแล้วจะไม่สามารถเปลี่ยนเนื้อหาได้ โปรดตรวจสอบให้แน่ใจก่อนยืนยัน</p>
       <form method="POST" action="/api/sponsor/action?action=create_bookings" id="bookForm">
         <input type="hidden" name="office_id" value="${activeOffice.id}" />
         <input type="hidden" name="week_start" value="${activeWeekIso}" />
         <input type="hidden" name="slot_numbers" id="slotNumbersField" />
         <div class="slot-grid">${slotCheckboxes}</div>
         <p id="totalPrice" class="hint" style="margin-top:12px; font-size:16px; font-weight:700; color:#1b1f27;">ยอดรวม: 0 บาท</p>
-        <button type="submit" class="btn-primary" style="margin-top:8px;">ยืนยันการจอง (ต้องชำระเงินภายใน 15 นาที)</button>
+        <button type="button" class="btn-primary" style="margin-top:8px;" onclick="openBookingConfirm()">ยืนยันการจอง (ต้องชำระเงินภายใน 15 นาที)</button>
       </form>
     </div>
+
+    <div class="modal-overlay" id="bookingConfirmModal">
+      <div class="modal-box" style="max-width:480px;">
+        <div class="modal-header">
+          <h2>ยืนยันรายการจอง</h2>
+          <button type="button" class="modal-close" onclick="closeBookingConfirm()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:13px; color:#e76f51; font-weight:600; margin:0 0 12px;">⚠️ หลังยืนยันแล้วจะไม่สามารถเปลี่ยนเนื้อหาได้ กรุณาตรวจสอบให้ถูกต้อง</p>
+          <table style="width:100%; font-size:13px; border-collapse:collapse;">
+            <tr><th style="text-align:left; padding:4px 0; border-bottom:1px solid #e5e7eb;">Slot</th><th style="text-align:left; padding:4px 0; border-bottom:1px solid #e5e7eb;">ไฟล์ที่จะแสดง</th></tr>
+            <tbody id="bookingConfirmList"></tbody>
+          </table>
+          <p id="bookingConfirmTotal" style="font-size:15px; font-weight:700; margin-top:12px;"></p>
+        </div>
+        <div class="modal-footer" style="display:flex; gap:8px;">
+          <button type="button" class="btn-small" style="flex:1; background:#9ca3af;" onclick="closeBookingConfirm()">ยกเลิก แก้ไขก่อน</button>
+          <button type="button" class="btn-primary" style="flex:1; margin-top:0;" onclick="confirmBookingSubmit()">ยืนยันการจอง</button>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; padding: 24px; }
+      .modal-overlay.open { display: flex; }
+      .modal-box { background: white; border-radius: 12px; max-width: 640px; width: 100%; max-height: 80vh; display: flex; flex-direction: column; }
+      .modal-header { padding: 16px 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
+      .modal-header h2 { font-size: 16px; margin: 0; }
+      .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #6b7280; width: auto; margin: 0; padding: 0; }
+      .modal-body { padding: 20px; overflow-y: auto; }
+      .modal-footer { padding: 12px 20px; border-top: 1px solid #e5e7eb; }
+    </style>
     <script>
       const pricePerSlot = ${activeOffice.price_per_week};
       const totalEl = document.getElementById('totalPrice');
@@ -293,30 +326,53 @@ async function renderBookTab(sponsor, query) {
         const count = document.querySelectorAll('.slot-checkbox:checked').length;
         totalEl.textContent = 'เลือก ' + count + ' slot — ยอดรวม: ' + (count * pricePerSlot).toLocaleString() + ' บาท';
       }
-      document.getElementById('bookForm').addEventListener('submit', (e) => {
+
+      // ---------- ขั้นที่ 1: ตรวจสอบข้อมูลให้ครบ แล้วเปิด Popup สรุปให้ดูอีกรอบก่อนส่งจริง ----------
+      function openBookingConfirm() {
         const checked = document.querySelectorAll('.slot-checkbox:checked');
         if (checked.length === 0) {
-          e.preventDefault();
           alert('กรุณาเลือกอย่างน้อย 1 slot');
           return;
         }
-        // กันเหนียว: ถ้า dropdown ของ slot ไหนยังไม่มีค่า (auto-select ตอนติ๊กพลาดไป) ให้เซ็ตให้ก่อน submit จริง
+
         let missing = false;
+        const rows = [];
         checked.forEach((cb) => {
           const select = document.querySelector('.slot-content-select[data-slot="' + cb.dataset.slot + '"]');
           if (select) {
-            if (!select.value && select.options.length > 1) {
-              select.selectedIndex = 1;
-            }
+            if (!select.value && select.options.length > 1) select.selectedIndex = 1;
             if (!select.value) missing = true;
+            rows.push({ slot: cb.dataset.slot, fileName: select.options[select.selectedIndex]?.text || '-' });
           }
         });
         if (missing) {
-          e.preventDefault();
           alert('กรุณาเลือกไฟล์ให้ครบทุก slot ที่ติ๊กไว้ (คุณอาจยังไม่มีไฟล์ในคลัง)');
           return;
         }
+
         document.getElementById('slotNumbersField').value = Array.from(checked).map((cb) => cb.dataset.slot).join(',');
+
+        const listBody = document.getElementById('bookingConfirmList');
+        listBody.innerHTML = rows
+          .map((r) => '<tr><td style="padding:6px 0; border-bottom:1px solid #f0f0f0;">Slot ' + r.slot + '</td><td style="padding:6px 0; border-bottom:1px solid #f0f0f0;">' + r.fileName + '</td></tr>')
+          .join('');
+        document.getElementById('bookingConfirmTotal').textContent =
+          'รวม ' + rows.length + ' slot — ยอดรวม ' + (rows.length * pricePerSlot).toLocaleString() + ' บาท';
+
+        document.getElementById('bookingConfirmModal').classList.add('open');
+      }
+
+      function closeBookingConfirm() {
+        document.getElementById('bookingConfirmModal').classList.remove('open');
+      }
+
+      // ---------- ขั้นที่ 2: กดยืนยันใน Popup แล้วค่อยส่งฟอร์มจริง ----------
+      function confirmBookingSubmit() {
+        document.getElementById('bookForm').submit();
+      }
+
+      document.getElementById('bookingConfirmModal').addEventListener('click', (e) => {
+        if (e.target.id === 'bookingConfirmModal') closeBookingConfirm();
       });
     </script>
     <style>
@@ -355,7 +411,7 @@ async function renderBookingsTab(sponsor, query) {
       const approvalColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[b.approval_status] || '#9ca3af';
       const weekDate = new Date(b.week_start);
       const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
-      const isLocked = b.approval_status !== 'pending'; // ตรวจแล้ว (ผ่านหรือไม่ผ่านก็ตาม) แก้เองไม่ได้ทั้งคู่
+      const isLocked = true; // ล็อกเสมอตั้งแต่ยืนยันการจองแล้ว เปลี่ยนได้แค่แจ้งทีมงานผ่านแชท (ขึ้นอยู่กับดุลยพินิจทีมงาน)
 
       // เห็นจำนวนรอบเล่นจริงแค่รายการที่จ่ายเงินแล้ว (ยังไม่จ่าย = ยังไม่ถูกส่งไปเล่นบนจอ)
       const playCount = b.payment_status === 'paid' ? await getPlayCountForBooking(b.office_account_id, b.slot_number, b.week_start) : null;
@@ -372,10 +428,9 @@ async function renderBookingsTab(sponsor, query) {
           ? '<span class="hint">หมดเวลาชำระเงิน</span>'
           : '';
 
-      const lockedNote = b.approval_status === 'approved' ? 'อนุมัติแล้ว' : 'ไม่ผ่านการตรวจสอบ';
-      const contentCell = isLocked
-        ? `${b.sponsor_content?.file_name || '-'}<br/><a href="/api/sponsor?page=chat" class="hint">${lockedNote} — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน</a>`
-        : null;
+      const lockedNote =
+        b.approval_status === 'approved' ? 'อนุมัติแล้ว' : b.approval_status === 'rejected' ? 'ไม่ผ่านการตรวจสอบ' : 'รอตรวจสอบ';
+      const contentCell = `${b.sponsor_content?.file_name || '-'}<br/><a href="/api/sponsor?page=chat" class="hint">${lockedNote} — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน (ขึ้นอยู่กับดุลยพินิจของทีมงาน)</a>`;
 
       const rejectionNote =
         b.approval_status === 'rejected' && b.rejection_reason ? `<div class="hint" style="color:#e76f51; margin-top:4px;">เหตุผล: ${b.rejection_reason}</div>` : '';
