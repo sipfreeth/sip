@@ -24,7 +24,7 @@ import {
 } from '../../lib/sponsorArea.js';
 import { listCustomerCards, isPromptPayConfigured, getPromptPayQrImageUrl, SUPPORTED_BANKS } from '../../lib/payments.js';
 
-const PAGES = ['content', 'book', 'bookings', 'profile'];
+const PAGES = ['content', 'book', 'bookings', 'profile', 'chat'];
 
 export default async function handler(req, res) {
   const sponsor = await requireSponsor(req, res);
@@ -37,6 +37,7 @@ export default async function handler(req, res) {
   if (page === 'book') content = await renderBookTab(sponsor, req.query);
   if (page === 'bookings') content = await renderBookingsTab(sponsor, req.query);
   if (page === 'profile') content = await renderProfileTab(sponsor);
+  if (page === 'chat') content = renderChatTab(sponsor);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, sponsor, content));
@@ -354,6 +355,7 @@ async function renderBookingsTab(sponsor, query) {
       const approvalColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[b.approval_status] || '#9ca3af';
       const weekDate = new Date(b.week_start);
       const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
+      const isLocked = b.approval_status === 'approved';
 
       // เห็นจำนวนรอบเล่นจริงแค่รายการที่จ่ายเงินแล้ว (ยังไม่จ่าย = ยังไม่ถูกส่งไปเล่นบนจอ)
       const playCount = b.payment_status === 'paid' ? await getPlayCountForBooking(b.office_account_id, b.slot_number, b.week_start) : null;
@@ -370,19 +372,30 @@ async function renderBookingsTab(sponsor, query) {
           ? '<span class="hint">หมดเวลาชำระเงิน</span>'
           : '';
 
+      const contentCell = isLocked
+        ? `${b.sponsor_content?.file_name || '-'}<br/><a href="/api/sponsor?page=chat" class="hint">อนุมัติแล้ว — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน</a>`
+        : null;
+
+      const rejectionNote =
+        b.approval_status === 'rejected' && b.rejection_reason ? `<div class="hint" style="color:#e76f51; margin-top:4px;">เหตุผล: ${b.rejection_reason}</div>` : '';
+
       return `
         <tr>
           <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
           <td>${weekDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-          <td>
-            <form method="POST" action="/api/sponsor/action?action=update_booking_content" class="inline-form">
-              <input type="hidden" name="booking_id" value="${b.id}" />
-              <select name="sponsor_content_id" class="table-input">${contentOptions(b.sponsor_content_id)}</select>
-          </td>
-          <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>
+          ${
+            isLocked
+              ? `<td colspan="2">${contentCell}</td>`
+              : `<td>
+                   <form method="POST" action="/api/sponsor/action?action=update_booking_content" class="inline-form">
+                     <input type="hidden" name="booking_id" value="${b.id}" />
+                     <select name="sponsor_content_id" class="table-input">${contentOptions(b.sponsor_content_id)}</select>
+                 </td>
+                 <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>`
+          }
           <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
           <td style="text-align:center;"><span class="tier-tag" style="background:${statusColor};">${statusLabel}</span></td>
-          <td style="text-align:center;"><span class="tier-tag" style="background:${approvalColor};">${approvalLabel}</span></td>
+          <td style="text-align:center;"><span class="tier-tag" style="background:${approvalColor};">${approvalLabel}</span>${rejectionNote}</td>
           <td style="text-align:center;">${playCount === null ? '<span class="muted">-</span>' : `<strong>${playCount.toLocaleString()}</strong> รอบ`}</td>
           <td>${actions}</td>
         </tr>`;
@@ -748,11 +761,64 @@ async function renderProfileTab(sponsor) {
 }
 
 // ---------- Layout ----------
+// ---------- แชทกับทีมงาน ----------
+function renderChatTab(sponsor) {
+  return `
+    <div class="section">
+      <h2>แชทกับทีมงาน</h2>
+      <p class="hint">แจ้งขอเปลี่ยนเนื้อหาที่อนุมัติแล้ว หรือสอบถามอื่นๆ ได้ที่นี่</p>
+      <div id="chatBox" style="height:360px; overflow-y:auto; border:1px solid #f0f0f0; border-radius:8px; padding:12px; margin-top:8px;"></div>
+      <form id="chatSendForm" style="display:flex; gap:8px; margin-top:12px;">
+        <input type="text" id="chatInput" placeholder="พิมพ์ข้อความ..." style="flex:1;" />
+        <button type="submit" class="btn-small">ส่ง</button>
+      </form>
+    </div>
+    <script>
+      const chatBox = document.getElementById('chatBox');
+
+      function renderMessages(messages) {
+        chatBox.innerHTML = messages.map((m) => {
+          const mine = m.sender_type === 'sponsor';
+          return '<div style="margin-bottom:10px; text-align:' + (mine ? 'right' : 'left') + ';">' +
+            '<div style="display:inline-block; max-width:75%; padding:8px 12px; border-radius:10px; background:' + (mine ? '#1b1f27' : '#f0f0f0') + '; color:' + (mine ? 'white' : '#1b1f27') + '; font-size:13px; text-align:left;">' +
+            '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + (m.sender_label || (mine ? 'คุณ' : 'ทีมงาน')) + '</div>' +
+            m.message.replace(/</g, '&lt;') +
+            '</div></div>';
+        }).join('');
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      async function poll() {
+        const res = await fetch('/api/sponsor/action?action=chat_poll');
+        const data = await res.json();
+        renderMessages(data.messages || []);
+      }
+
+      document.getElementById('chatSendForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('chatInput');
+        const message = input.value.trim();
+        if (!message) return;
+        input.value = '';
+        await fetch('/api/sponsor/action?action=chat_send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message }).toString(),
+        });
+        poll();
+      });
+
+      poll();
+      setInterval(poll, 2500);
+    </script>`;
+}
+
 function renderLayout(activePage, sponsor, content) {
   const tabs = [
     { key: 'content', label: 'Content Library' },
     { key: 'book', label: 'จองสล็อตใหม่' },
     { key: 'bookings', label: 'สล็อตของฉัน' },
+    { key: 'chat', label: 'แชทกับทีมงาน' },
     { key: 'profile', label: 'Profile' },
   ];
   const nav = tabs
