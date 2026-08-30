@@ -1,6 +1,9 @@
 {
   "crons": [
-    { "path": "/api/member-action?do=cron_hunger_check", "schedule": "0 * * * *" }
+    {
+      "path": "/api/member-action?do=cron_hunger_check",
+      "schedule": "0 9 * * *"
+    }
   ],
   "functions": {
     "api/member-action.js": {
