@@ -584,6 +584,10 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
   .badge-chip { display: inline-block; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 10px; font-size: 12px; margin: 4px 4px 0 0; }
   .link-row { text-align: center; margin-top: 16px; font-size: 13px; }
   .link-row a { color: #2a78d6; text-decoration: none; }
+  .closet-section { border-top: 1px solid #f0f0f0; padding-top: 10px; }
+  .closet-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; }
+  .equip-btn { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .equip-btn.equipped { background: #06c755; color: white; border-color: #06c755; }
 </style>
 </head>
 <body>
@@ -618,6 +622,25 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
 
     ${badgeChips ? `<div style="margin-top:12px;">${badgeChips}</div>` : ''}
 
+    ${
+      inventory.length
+        ? `<div class="closet-section">
+            <h3 style="font-size:14px; margin:16px 0 8px;">🎀 ตู้เสื้อผ้า</h3>
+            ${inventory
+              .map(
+                (i) => `
+              <div class="closet-item">
+                <span>${i.pet_shop_items?.name || '-'}</span>
+                <button class="equip-btn ${i.equipped ? 'equipped' : ''}" data-inventory="${i.id}" data-equipped="${i.equipped}">
+                  ${i.equipped ? 'ถอด' : 'สวมใส่'}
+                </button>
+              </div>`
+              )
+              .join('')}
+          </div>`
+        : ''
+    }
+
     <div class="link-row">
       <a href="/api/member-action?do=pet_shop">🛒 ร้านค้า (Point: ${spendableBalance.toLocaleString()})</a>
     </div>
@@ -649,6 +672,20 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
 
     feedBtn.addEventListener('click', () => doAction('pet_feed', feedBtn));
     playBtn.addEventListener('click', () => doAction('pet_play', playBtn));
+
+    document.querySelectorAll('.equip-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const currentlyEquipped = btn.dataset.equipped === 'true';
+        await fetch('/api/member-action?do=pet_equip', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ inventory_id: btn.dataset.inventory, equipped: String(!currentlyEquipped) }).toString(),
+        });
+        window.location.reload();
+      });
+    });
   </script>
 </body>
 </html>`;
