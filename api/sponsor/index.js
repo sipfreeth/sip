@@ -355,7 +355,7 @@ async function renderBookingsTab(sponsor, query) {
       const approvalColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[b.approval_status] || '#9ca3af';
       const weekDate = new Date(b.week_start);
       const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
-      const isLocked = b.approval_status === 'approved';
+      const isLocked = b.approval_status !== 'pending'; // ตรวจแล้ว (ผ่านหรือไม่ผ่านก็ตาม) แก้เองไม่ได้ทั้งคู่
 
       // เห็นจำนวนรอบเล่นจริงแค่รายการที่จ่ายเงินแล้ว (ยังไม่จ่าย = ยังไม่ถูกส่งไปเล่นบนจอ)
       const playCount = b.payment_status === 'paid' ? await getPlayCountForBooking(b.office_account_id, b.slot_number, b.week_start) : null;
@@ -372,8 +372,9 @@ async function renderBookingsTab(sponsor, query) {
           ? '<span class="hint">หมดเวลาชำระเงิน</span>'
           : '';
 
+      const lockedNote = b.approval_status === 'approved' ? 'อนุมัติแล้ว' : 'ไม่ผ่านการตรวจสอบ';
       const contentCell = isLocked
-        ? `${b.sponsor_content?.file_name || '-'}<br/><a href="/api/sponsor?page=chat" class="hint">อนุมัติแล้ว — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน</a>`
+        ? `${b.sponsor_content?.file_name || '-'}<br/><a href="/api/sponsor?page=chat" class="hint">${lockedNote} — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน</a>`
         : null;
 
       const rejectionNote =
