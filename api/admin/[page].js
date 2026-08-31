@@ -39,7 +39,7 @@ export default async function handler(req, res) {
   if (page === 'account') content = renderAccountTab(admin);
   if (page === 'sponsors') content = await renderSponsorsTab(admin, req.query);
   if (page === 'chat') content = await renderChatTab(admin, req.query);
-  if (page === 'pet-shop') content = await renderPetShopAdminTab(admin);
+  if (page === 'pet-shop') content = await renderPetShopAdminTab(admin, req.query);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, admin, content));
@@ -1303,9 +1303,14 @@ async function renderChatTab(admin, query) {
 }
 
 // ---------- จัดการร้านค้าเกมเลี้ยงสัตว์ ----------
-async function renderPetShopAdminTab(admin) {
+async function renderPetShopAdminTab(admin, query) {
+  const keyword = (query.q || '').trim();
+
+  let itemsQuery = supabase.from('pet_shop_items').select('*').order('item_type').order('points_cost');
+  if (keyword) itemsQuery = itemsQuery.ilike('name', `%${keyword}%`);
+
   const [itemsRes, configRes] = await Promise.all([
-    supabase.from('pet_shop_items').select('*').order('item_type').order('points_cost'),
+    itemsQuery,
     supabase.from('pet_game_config').select('*').order('key'),
   ]);
 
@@ -1314,19 +1319,47 @@ async function renderPetShopAdminTab(admin) {
 
   const typeLabel = { food: '🍚 อาหาร', treat: '🍬 ขนม', supplement: '💪 อาหารเสริม', accessory: '🎀 เครื่องแต่งกาย' };
   const slotLabel = { bow: 'โบว์', hat: 'หมวก', glasses: 'แว่นตา', mouth: 'เครื่องปาก', shoes: 'รองเท้า' };
+  const qParam = keyword ? `&q=${encodeURIComponent(keyword)}` : '';
 
   const itemRows = items
     .map(
       (item) => `
       <tr style="${item.active ? '' : 'opacity:0.5;'}">
-        <td>${typeLabel[item.item_type] || item.item_type}${item.accessory_slot ? ` (${slotLabel[item.accessory_slot] || item.accessory_slot})` : ''}</td>
-        <td>${item.name}</td>
-        <td style="text-align:right;">${item.points_cost.toLocaleString()}</td>
-        <td style="text-align:center;">${item.hunger_boost || '-'}</td>
-        <td style="text-align:center;">${item.happiness_boost || '-'}</td>
+        <form method="POST" action="/api/admin/action?action=pet_shop_item_update" class="inline-form">
+          <input type="hidden" name="item_id" value="${item.id}" />
+          <input type="hidden" name="item_type" value="${item.item_type}" />
+          <input type="hidden" name="q" value="${keyword}" />
+          <td>${typeLabel[item.item_type] || item.item_type}${
+        item.item_type === 'accessory'
+          ? `<br/><select name="accessory_slot" class="table-input" style="margin-top:4px; font-size:12px;">
+              ${Object.keys(slotLabel)
+                .map((s) => `<option value="${s}" ${item.accessory_slot === s ? 'selected' : ''}>${slotLabel[s]}</option>`)
+                .join('')}
+            </select>`
+          : ''
+      }</td>
+          <td><input type="text" name="name" value="${item.name}" class="table-input" style="min-width:100px;" /></td>
+          <td style="text-align:right;"><input type="number" name="points_cost" value="${item.points_cost}" min="0" class="table-input" style="width:70px; text-align:right;" /></td>
+          <td style="text-align:center;">
+            ${
+              item.item_type === 'accessory'
+                ? '-'
+                : `<input type="number" name="hunger_boost" value="${item.hunger_boost || 0}" min="0" max="100" class="table-input" style="width:55px; text-align:center;" />`
+            }
+          </td>
+          <td style="text-align:center;">
+            ${
+              item.item_type === 'accessory'
+                ? '-'
+                : `<input type="number" name="happiness_boost" value="${item.happiness_boost || 0}" min="0" max="100" class="table-input" style="width:55px; text-align:center;" />`
+            }
+          </td>
+          <td style="text-align:center;"><button class="btn-small">บันทึก</button></td>
+        </form>
         <td style="text-align:center;">
           <form method="POST" action="/api/admin/action?action=pet_shop_item_toggle" style="display:inline;">
             <input type="hidden" name="item_id" value="${item.id}" />
+            <input type="hidden" name="q" value="${keyword}" />
             <button class="btn-small ${item.active ? 'btn-danger' : ''}">${item.active ? 'ปิดขาย' : 'เปิดขาย'}</button>
           </form>
         </td>
@@ -1392,10 +1425,16 @@ async function renderPetShopAdminTab(admin) {
     </div>
 
     <div class="section">
-      <h2>ไอเทมทั้งหมดในร้าน (${items.length})</h2>
+      <h2>ไอเทมทั้งหมดในร้าน (${items.length}${keyword ? ` — ค้นหา "${keyword}"` : ''})</h2>
+      <form method="GET" action="/api/admin/pet-shop" style="display:flex; gap:8px; max-width:360px; margin-bottom:12px;">
+        <input type="text" name="q" value="${keyword}" placeholder="ค้นหาชื่อไอเทม..." class="table-input" style="flex:1;" />
+        <button type="submit" class="btn-small">ค้นหา</button>
+        ${keyword ? `<a href="/api/admin/pet-shop" class="btn-small btn-danger" style="text-decoration:none; display:inline-flex; align-items:center;">ล้าง</a>` : ''}
+      </form>
+      <p class="hint">แก้ตัวเลขในตารางแล้วกด "บันทึก" ต่อแถวได้เลย ไม่ต้องลบแล้วสร้างใหม่</p>
       <table>
-        <tr><th>ประเภท</th><th>ชื่อ</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">อิ่ม %</th><th style="text-align:center;">สุข %</th><th></th></tr>
-        ${itemRows || '<tr><td colspan="6" class="muted">ยังไม่มีไอเทมในร้าน — เพิ่มจากฟอร์มด้านบน</td></tr>'}
+        <tr><th>ประเภท</th><th>ชื่อ</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">อิ่ม %</th><th style="text-align:center;">สุข %</th><th></th><th></th></tr>
+        ${itemRows || `<tr><td colspan="7" class="muted">${keyword ? 'ไม่พบไอเทมที่ค้นหา' : 'ยังไม่มีไอเทมในร้าน — เพิ่มจากฟอร์มด้านบน'}</td></tr>`}
       </table>
     </div>
 
