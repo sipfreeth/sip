@@ -17,6 +17,8 @@ import {
   getBookingGroup,
   getPlayCountForBooking,
   getSponsorCreditBalance,
+  getAiringStatus,
+  AIRING_STATUS_LABEL,
   MAX_FILES_PER_SPONSOR,
   MAX_IMAGE_MB,
   MAX_VIDEO_MB,
@@ -438,6 +440,11 @@ async function renderBookingsTab(sponsor, query) {
       const rejectionNote =
         b.approval_status === 'rejected' && b.rejection_reason ? `<div class="hint" style="color:#e76f51; margin-top:4px;">เหตุผล: ${b.rejection_reason}</div>` : '';
 
+      const airingStatus = getAiringStatus(b);
+      const airingHtml = airingStatus
+        ? `<span style="color:${AIRING_STATUS_LABEL[airingStatus].color}; font-weight:600;">${AIRING_STATUS_LABEL[airingStatus].text}</span>`
+        : '<span class="muted">-</span>';
+
       return `
         <tr>
           <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
@@ -455,6 +462,7 @@ async function renderBookingsTab(sponsor, query) {
           <td style="text-align:right;">${Number(b.price).toLocaleString()} บาท</td>
           <td style="text-align:center;"><span class="tier-tag" style="background:${statusColor};">${statusLabel}</span></td>
           <td style="text-align:center;"><span class="tier-tag" style="background:${approvalColor};">${approvalLabel}</span>${rejectionNote}</td>
+          <td style="text-align:center;">${airingHtml}</td>
           <td style="text-align:center;">${playCount === null ? '<span class="muted">-</span>' : `<strong>${playCount.toLocaleString()}</strong> รอบ`}</td>
           <td>${actions}</td>
         </tr>`;
@@ -466,8 +474,8 @@ async function renderBookingsTab(sponsor, query) {
       <h2>สล็อตที่จองไว้ทั้งหมด</h2>
       <p class="hint">รายการ "รอชำระเงิน" ต้องจ่ายภายใน 15 นาทีหลังจอง ไม่งั้นระบบจะคืน slot ให้คนอื่นอัตโนมัติ</p>
       <table>
-        <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะจ่ายเงิน</th><th style="text-align:center;">สถานะไฟล์</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
-        ${rows.join('') || '<tr><td colspan="9" class="muted">ยังไม่มีการจอง</td></tr>'}
+        <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะจ่ายเงิน</th><th style="text-align:center;">สถานะไฟล์</th><th style="text-align:center;">สถานะขึ้นจอ</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
+        ${rows.join('') || '<tr><td colspan="10" class="muted">ยังไม่มีการจอง</td></tr>'}
       </table>
     </div>`;
 }
