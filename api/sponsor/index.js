@@ -26,7 +26,7 @@ import {
 } from '../../lib/sponsorArea.js';
 import { listCustomerCards, isPromptPayConfigured, getPromptPayQrImageUrl, SUPPORTED_BANKS } from '../../lib/payments.js';
 
-const PAGES = ['content', 'book', 'bookings', 'profile', 'chat'];
+const PAGES = ['content', 'book', 'bookings', 'profile', 'chat', 'qr'];
 
 export default async function handler(req, res) {
   const sponsor = await requireSponsor(req, res);
@@ -40,6 +40,7 @@ export default async function handler(req, res) {
   if (page === 'bookings') content = await renderBookingsTab(sponsor, req.query);
   if (page === 'profile') content = await renderProfileTab(sponsor);
   if (page === 'chat') content = renderChatTab(sponsor);
+  if (page === 'qr') content = await renderQrCampaignsTab(sponsor);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, sponsor, content));
@@ -48,6 +49,7 @@ export default async function handler(req, res) {
 // ---------- Content Library tab ----------
 async function renderContentTab(sponsor) {
   const items = await getSponsorContent(sponsor.id);
+  const { data: campaigns } = await supabase.from('creatives').select('creative_id, campaign_name').eq('sponsor_id', sponsor.id).eq('active', true);
 
   const rows = await Promise.all(
     items.map(async (item) => {
@@ -60,6 +62,7 @@ async function renderContentTab(sponsor) {
         <div class="content-card">
           ${preview}
           <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${item.file_name}</p>
+          ${item.creative_id ? `<p class="hint" style="margin:0 0 6px;">🔗 QR: ${item.creative_id}</p>` : ''}
           <form method="POST" action="/api/sponsor/action?action=delete_content" onsubmit="return confirm('ลบไฟล์นี้?')" style="margin-top:8px;">
             <input type="hidden" name="content_id" value="${item.id}" />
             <button class="btn-small btn-danger" type="submit">ลบ</button>
@@ -69,6 +72,7 @@ async function renderContentTab(sponsor) {
   );
 
   const canUploadMore = items.length < MAX_FILES_PER_SPONSOR;
+  const campaignOptions = (campaigns || []).map((c) => `<option value="${c.creative_id}">${c.campaign_name || c.creative_id}</option>`).join('');
 
   const uploadForm = canUploadMore
     ? `
@@ -78,6 +82,11 @@ async function renderContentTab(sponsor) {
         <p class="hint">อัปโหลดเสร็จใช้เลือกลง Slot ได้ทันที — Admin จะตรวจสอบตอนที่คุณเลือกใส่ Slot อีกครั้งก่อนขึ้นจอจริง</p>
         <form class="sponsor-upload-form">
           <input type="file" name="file" accept="image/jpeg,image/png,video/mp4" required />
+          <label class="hint" style="display:block; margin-top:8px;">ไฟล์นี้ใช้คู่กับแคมเปญ QR ไหน (ไม่บังคับ)</label>
+          <select name="creative_id" class="table-input">
+            <option value="">-- ไม่ผูกกับแคมเปญไหน --</option>
+            ${campaignOptions}
+          </select>
           <button type="submit" class="btn-primary" style="margin-top:10px;">อัปโหลด</button>
           <p class="upload-status hint" style="margin-top:8px;"></p>
         </form>
@@ -143,10 +152,11 @@ async function renderContentTab(sponsor) {
 
             statusEl.textContent = 'กำลังบันทึกข้อมูล...';
             const fileType = file.type.startsWith('video') ? 'video' : 'image';
+            const creativeId = form.querySelector('select[name="creative_id"]')?.value || '';
             const saveRes = await fetch('/api/sponsor/action?action=save_content', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({ file_path: urlData.path, file_name: file.name, file_type: fileType }).toString(),
+              body: new URLSearchParams({ file_path: urlData.path, file_name: file.name, file_type: fileType, creative_id: creativeId }).toString(),
             });
             if (!saveRes.ok) throw new Error(await saveRes.text());
 
@@ -880,12 +890,86 @@ function renderChatTab(sponsor) {
     </script>`;
 }
 
+// ---------- แคมเปญ QR (Sponsor สร้างเอง — พาไปปลายทาง หรือโชว์โค้ดโปรโมชั่น) ----------
+async function renderQrCampaignsTab(sponsor) {
+  const { data: campaigns } = await supabase
+    .from('creatives')
+    .select('*')
+    .eq('sponsor_id', sponsor.id)
+    .order('created_at', { ascending: false });
+
+  const rows = (campaigns || [])
+    .map((c) => {
+      const scanUrl = `${process.env.APP_BASE_URL}/api/qr/${c.creative_id}`;
+      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}`;
+      return `
+        <div class="qr-card">
+          <img src="${qrImageUrl}" alt="QR" style="width:120px; height:120px; border:1px solid #e5e7eb; border-radius:8px;" />
+          <div style="flex:1;">
+            <p style="font-weight:600; margin:0 0 4px;">${c.campaign_name || c.creative_id}</p>
+            <p class="hint" style="margin:0 0 4px;">${c.campaign_type === 'link' ? `🔗 พาไปปลายทาง: ${c.destination_url}` : `🎁 โชว์โค้ด: ${c.promo_code}`}</p>
+            <p class="hint" style="margin:0;">Code: ${c.creative_id}</p>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <a href="${qrImageUrl}" download="${c.creative_id}.png" class="btn-small" style="text-decoration:none;">⬇ ดาวน์โหลด QR</a>
+              <form method="POST" action="/api/sponsor/action?action=qr_campaign_toggle" style="display:inline;">
+                <input type="hidden" name="creative_id" value="${c.creative_id}" />
+                <button class="btn-small ${c.active ? 'btn-danger' : ''}">${c.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button>
+              </form>
+            </div>
+          </div>
+        </div>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>สร้างแคมเปญ QR ใหม่</h2>
+      <p class="hint">สร้าง QR ก่อน แล้วนำไปแปะในภาพ/วิดีโอของคุณเอง ก่อนอัปโหลดเข้าคลัง Content</p>
+      <form method="POST" action="/api/sponsor/action?action=qr_campaign_create" class="stack-form" id="qrForm">
+        <label>ชื่อแคมเปญ (ไม่บังคับ ไว้จำง่ายๆ)</label>
+        <input type="text" name="campaign_name" placeholder="เช่น โปรโมชั่นเดือนกันยายน" />
+        <label>ประเภท</label>
+        <select name="campaign_type" id="campaignTypeSelect" required>
+          <option value="link">🔗 พาไปปลายทาง (มีเว็บไซต์/ลิงก์ของตัวเอง)</option>
+          <option value="promo_code">🎁 โชว์โค้ดโปรโมชั่น (ให้ลูกค้าแคปไปใช้ที่ร้าน)</option>
+        </select>
+        <div id="linkFields">
+          <label>ลิงก์ปลายทาง</label>
+          <input type="url" name="destination_url" placeholder="https://..." />
+        </div>
+        <div id="promoFields" style="display:none;">
+          <label>โค้ดโปรโมชั่น</label>
+          <input type="text" name="promo_code" placeholder="เช่น SAVE100" />
+          <label>คำแนะนำการใช้ (ไม่บังคับ)</label>
+          <input type="text" name="promo_instructions" placeholder="เช่น แสดงโค้ดนี้ที่แคชเชียร์เพื่อรับส่วนลด" />
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top:12px;">สร้าง QR</button>
+      </form>
+      <script>
+        document.getElementById('campaignTypeSelect').addEventListener('change', function () {
+          const isPromo = this.value === 'promo_code';
+          document.getElementById('linkFields').style.display = isPromo ? 'none' : 'block';
+          document.getElementById('promoFields').style.display = isPromo ? 'block' : 'none';
+        });
+      </script>
+    </div>
+
+    <div class="section">
+      <h2>แคมเปญ QR ของฉัน (${(campaigns || []).length})</h2>
+      ${rows || '<p class="muted">ยังไม่มีแคมเปญ — สร้างจากฟอร์มด้านบน</p>'}
+    </div>
+    <style>
+      .qr-card { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+    </style>`;
+}
+
 function renderLayout(activePage, sponsor, content) {
   const tabs = [
     { key: 'content', label: 'Content Library' },
     { key: 'book', label: 'จองสล็อตใหม่' },
     { key: 'bookings', label: 'สล็อตของฉัน' },
     { key: 'chat', label: 'แชทกับทีมงาน' },
+    { key: 'qr', label: 'แคมเปญ QR' },
     { key: 'profile', label: 'Profile' },
   ];
   const nav = tabs
