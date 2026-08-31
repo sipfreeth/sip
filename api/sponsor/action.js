@@ -329,6 +329,7 @@ export default async function handler(req, res) {
         fileName: params.get('file_name'),
         filePath: params.get('file_path'),
         fileType: params.get('file_type'),
+        creativeId: params.get('creative_id') || null,
       });
       res.status(200).send('ok');
     } catch (err) {
@@ -728,6 +729,69 @@ export default async function handler(req, res) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+    return;
+  }
+
+  // ---------- สร้าง QR แคมเปญของตัวเอง (พาไปปลายทาง หรือโชว์โค้ดโปรโมชั่น) ----------
+  if (actionParam === 'qr_campaign_create') {
+    const campaignType = params.get('campaign_type');
+    if (!['link', 'promo_code'].includes(campaignType)) {
+      res.status(400).send('ประเภทแคมเปญไม่ถูกต้อง');
+      return;
+    }
+
+    // สร้าง creative_id ที่ไม่ซ้ำ อิงจาก Sponsor Code + สุ่มสั้นๆ อ่านง่ายพอสมควร
+    const creativeId = `sp${sponsor.sponsor_code}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const insertData = {
+      creative_id: creativeId,
+      sponsor_id: sponsor.id,
+      campaign_name: params.get('campaign_name') || null,
+      campaign_type: campaignType,
+      active: true,
+    };
+
+    if (campaignType === 'link') {
+      const destination = params.get('destination_url');
+      if (!destination) {
+        res.status(400).send('กรุณากรอกลิงก์ปลายทาง');
+        return;
+      }
+      insertData.destination_url = destination;
+    } else {
+      const promoCode = params.get('promo_code');
+      if (!promoCode) {
+        res.status(400).send('กรุณากรอกโค้ดโปรโมชั่น');
+        return;
+      }
+      insertData.promo_code = promoCode;
+      insertData.promo_instructions = params.get('promo_instructions') || null;
+    }
+
+    const { error } = await supabase.from('creatives').insert(insertData);
+    if (error) {
+      res.status(400).send(`สร้างแคมเปญไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/sponsor?page=qr' });
+    res.end();
+    return;
+  }
+
+  if (actionParam === 'qr_campaign_toggle') {
+    const { data: campaign } = await supabase
+      .from('creatives')
+      .select('active')
+      .eq('creative_id', params.get('creative_id'))
+      .eq('sponsor_id', sponsor.id)
+      .maybeSingle();
+    if (!campaign) {
+      res.status(404).send('ไม่พบแคมเปญนี้');
+      return;
+    }
+    await supabase.from('creatives').update({ active: !campaign.active }).eq('creative_id', params.get('creative_id')).eq('sponsor_id', sponsor.id);
+    res.writeHead(302, { Location: '/api/sponsor?page=qr' });
+    res.end();
     return;
   }
 
