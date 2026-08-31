@@ -892,11 +892,15 @@ function renderChatTab(sponsor) {
 
 // ---------- แคมเปญ QR (Sponsor สร้างเอง — พาไปปลายทาง หรือโชว์โค้ดโปรโมชั่น) ----------
 async function renderQrCampaignsTab(sponsor) {
-  const { data: campaigns } = await supabase
+  const { data: campaigns, error: campaignsError } = await supabase
     .from('creatives')
     .select('*')
     .eq('sponsor_id', sponsor.id)
     .order('created_at', { ascending: false });
+
+  if (campaignsError) {
+    console.error('🔍QR_CAMPAIGN_DEBUG🔍 ดึงรายการแคมเปญไม่สำเร็จ:', campaignsError.message);
+  }
 
   const rows = (campaigns || [])
     .map((c) => {
