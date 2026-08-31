@@ -12,7 +12,7 @@
 import { supabase } from '../lib/supabaseClient.js';
 import { verifyRedeemToken } from '../lib/memberToken.js';
 import { getCurrentYearStart } from '../lib/tiers.js';
-import { createPet, feedPet, playWithPet, giveTreat, buyAccessory, toggleEquip, getMemberPet, getPetInventory, getShopItems, getPetBadges } from '../lib/petGame.js';
+import { createPet, playWithPet, buyItem, useInventoryItem, toggleEquip, getMemberPet, getPetBag, getPetCloset, getShopItems, getPetBadges } from '../lib/petGame.js';
 import { getMemberFromSession } from '../lib/memberAuth.js';
 import { sendPushNotification } from '../lib/webpush.js';
 
@@ -146,7 +146,7 @@ export default async function handler(req, res) {
   }
 
   // ---------- Action ในเกม (ใช้ Session Cookie ไม่ต้องผ่าน LINE ซ้ำทุกครั้ง — กดถี่ได้ลื่นๆ) ----------
-  if (['pet_create', 'pet_feed', 'pet_play', 'pet_shop', 'pet_treat', 'pet_buy', 'pet_equip', 'push_subscribe'].includes(doParam)) {
+  if (['pet_create', 'pet_play', 'pet_shop', 'pet_use_item', 'pet_buy_item', 'pet_equip', 'push_subscribe'].includes(doParam)) {
     const memberId = getMemberFromSession(req);
     if (!memberId) {
       res.status(401).send('Session หมดอายุ กรุณาเข้าหน้าสัตว์เลี้ยงใหม่อีกครั้ง');
@@ -170,21 +170,6 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (doParam === 'pet_feed') {
-      if (req.method !== 'POST') {
-        res.status(405).send('Method not allowed');
-        return;
-      }
-      try {
-        const result = await feedPet(memberId);
-        res.setHeader('Content-Type', 'application/json');
-        res.status(200).json(result);
-      } catch (err) {
-        res.status(400).json({ error: err.message });
-      }
-      return;
-    }
-
     if (doParam === 'pet_play') {
       if (req.method !== 'POST') {
         res.status(405).send('Method not allowed');
@@ -200,7 +185,8 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (doParam === 'pet_treat') {
+    // ---------- ใช้ไอเทมจากกระเป๋า (อาหาร/ขนม) — วิธีเดียวที่ให้อาหารสัตว์เลี้ยงได้ ----------
+    if (doParam === 'pet_use_item') {
       if (req.method !== 'POST') {
         res.status(405).send('Method not allowed');
         return;
@@ -209,7 +195,7 @@ export default async function handler(req, res) {
       for await (const chunk of req) body += chunk;
       const params = new URLSearchParams(body);
       try {
-        const result = await giveTreat(memberId, params.get('item_id'));
+        const result = await useInventoryItem(memberId, params.get('inventory_id'));
         res.setHeader('Content-Type', 'application/json');
         res.status(200).json(result);
       } catch (err) {
@@ -218,7 +204,8 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (doParam === 'pet_buy') {
+    // ---------- ซื้อไอเทม (ทุกประเภท) — เข้ากระเป๋า/ตู้เสื้อผ้าเสมอ ไม่ได้ใช้ทันที ----------
+    if (doParam === 'pet_buy_item') {
       if (req.method !== 'POST') {
         res.status(405).send('Method not allowed');
         return;
@@ -227,7 +214,7 @@ export default async function handler(req, res) {
       for await (const chunk of req) body += chunk;
       const params = new URLSearchParams(body);
       try {
-        await buyAccessory(memberId, params.get('item_id'));
+        await buyItem(memberId, params.get('item_id'));
         res.status(200).send('ok');
       } catch (err) {
         res.status(400).send(err.message);
@@ -284,14 +271,16 @@ export default async function handler(req, res) {
         res.end();
         return;
       }
-      const [foodItems, treatItems, accessoryItems, inventory] = await Promise.all([
+      const [foodItems, treatItems, supplementItems, accessoryItems] = await Promise.all([
         getShopItems('food'),
         getShopItems('treat'),
+        getShopItems('supplement'),
         getShopItems('accessory'),
-        getPetInventory(pet.id),
       ]);
+      const closet = await getPetCloset(pet.id);
+      const ownedAccessoryIds = new Set(closet.map((i) => i.shop_item_id));
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.status(200).send(renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory));
+      res.status(200).send(renderPetShopPage({ foodItems, treatItems, supplementItems, accessoryItems, ownedAccessoryIds }));
       return;
     }
   }
@@ -371,10 +360,10 @@ function renderSuccessPage(reward, newBalance) {
 </html>`;
 }
 
-function renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory) {
-  const ownedItemIds = new Set(inventory.map((i) => i.shop_item_id));
+const ACCESSORY_SLOT_LABEL = { bow: '🎀 โบว์', hat: '🎩 หมวก', glasses: '👓 แว่นตา', mouth: '👄 เครื่องปาก', shoes: '👟 รองเท้า' };
 
-  const renderItemCard = (item, actionType) => `
+function renderPetShopPage({ foodItems, treatItems, supplementItems, accessoryItems, ownedAccessoryIds }) {
+  const renderItemCard = (item, isOwned) => `
     <div class="shop-item">
       <div>
         <div class="item-name">${item.name}</div>
@@ -382,15 +371,30 @@ function renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory
         ${item.description ? `<div class="item-desc">${item.description}</div>` : ''}
       </div>
       ${
-        actionType === 'accessory' && ownedItemIds.has(item.id)
+        isOwned
           ? `<span class="btn btn-owned">มีแล้ว</span>`
-          : `<button class="btn buy-btn" data-action="${actionType}" data-item="${item.id}">${actionType === 'accessory' ? 'ซื้อ' : 'ให้เลย'}</button>`
+          : `<button class="btn buy-btn" data-item="${item.id}">ซื้อ</button>`
       }
     </div>`;
 
-  const foodHtml = foodItems.map((i) => renderItemCard(i, 'pet_treat')).join('') || '<p class="muted">ยังไม่มีอาหารในร้าน</p>';
-  const treatHtml = treatItems.map((i) => renderItemCard(i, 'pet_treat')).join('') || '<p class="muted">ยังไม่มีขนมในร้าน</p>';
-  const accessoryHtml = accessoryItems.map((i) => renderItemCard(i, 'pet_buy')).join('') || '<p class="muted">ยังไม่มีเครื่องแต่งกายในร้าน</p>';
+  const foodTreatItems = [...foodItems, ...treatItems];
+  const foodHtml = foodTreatItems.map((i) => renderItemCard(i, false)).join('') || '<p class="muted">ยังไม่มีอาหาร/ขนมในร้าน</p>';
+
+  // จัดกลุ่มเครื่องแต่งกายตาม Slot (โบว์/หมวก/แว่นตา/เครื่องปาก/รองเท้า)
+  const bySlot = {};
+  for (const item of accessoryItems) {
+    const slot = item.accessory_slot || 'อื่นๆ';
+    if (!bySlot[slot]) bySlot[slot] = [];
+    bySlot[slot].push(item);
+  }
+  const accessoryHtml =
+    Object.keys(bySlot)
+      .map(
+        (slot) => `
+        <h3 style="font-size:13px; color:#6b7280; margin:16px 0 4px;">${ACCESSORY_SLOT_LABEL[slot] || slot}</h3>
+        ${bySlot[slot].map((i) => renderItemCard(i, ownedAccessoryIds.has(i.id))).join('')}`
+      )
+      .join('') || '<p class="muted">ยังไม่มีเครื่องแต่งกายในร้าน</p>';
 
   return `<!DOCTYPE html>
 <html lang="th">
@@ -417,14 +421,16 @@ function renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory
 <body>
   <div class="card">
     <h2>🍚 อาหาร</h2>
+    <p class="hint" style="margin-top:-6px;">ซื้อแล้วเข้ากระเป๋า ไปเลือกให้ที่หน้าสัตว์เลี้ยงได้เลย</p>
     ${foodHtml}
   </div>
   <div class="card">
-    <h2>🍬 ขนม (เพิ่มความสุขเยอะกว่า)</h2>
-    ${treatHtml}
+    <h2>💪 อาหารเสริม</h2>
+    <p class="muted">เร็วๆ นี้ — ใช้เพิ่มพลังโจมตีตอนมีระบบต่อสู้</p>
   </div>
   <div class="card">
     <h2>🎀 เครื่องแต่งกาย</h2>
+    <p class="hint" style="margin-top:-6px;">สวมได้ทีละ 1 ชิ้นต่อประเภท เลือกสวมได้ที่ตู้เสื้อผ้าในหน้าสัตว์เลี้ยง</p>
     ${accessoryHtml}
   </div>
   <a href="/api/member-action?do=pet" class="back-link">&larr; กลับไปหน้าสัตว์เลี้ยง</a>
@@ -434,9 +440,8 @@ function renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         btn.textContent = 'กำลังทำรายการ...';
-        const action = btn.dataset.action;
         const itemId = btn.dataset.item;
-        const res = await fetch('/api/member-action?do=' + action, {
+        const res = await fetch('/api/member-action?do=pet_buy_item', {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -448,7 +453,7 @@ function renderPetShopPage(pet, foodItems, treatItems, accessoryItems, inventory
           const msg = res.headers.get('content-type')?.includes('json') ? (await res.json()).error : await res.text();
           alert(msg || 'เกิดข้อผิดพลาด');
           btn.disabled = false;
-          btn.textContent = action === 'pet_buy' ? 'ซื้อ' : 'ให้เลย';
+          btn.textContent = 'ซื้อ';
         }
       });
     });
