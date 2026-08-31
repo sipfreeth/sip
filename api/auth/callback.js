@@ -14,7 +14,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getTier, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { createRedeemToken } from '../../lib/memberToken.js';
-import { getMemberPet, getPetInventory, getPetBadges, SPECIES_LIST } from '../../lib/petGame.js';
+import { getMemberPet, getPetBag, getPetCloset, getPetBadges, SPECIES_LIST } from '../../lib/petGame.js';
 import { createMemberSessionCookie } from '../../lib/memberAuth.js';
 
 const supabase = createClient(
@@ -203,12 +203,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    const [inventory, badges, spendableBalance] = await Promise.all([
-      getPetInventory(pet.id),
+    const [bag, closet, badges, spendableBalance] = await Promise.all([
+      getPetBag(pet.id),
+      getPetCloset(pet.id),
       getPetBadges(pet.id),
       getSpendableBalance(member.id),
     ]);
-    res.status(200).send(renderPetDashboard(member, pet, inventory, badges, spendableBalance));
+    res.status(200).send(renderPetDashboard(member, pet, bag, closet, badges, spendableBalance));
     return;
   }
 
@@ -546,7 +547,7 @@ function renderPetCreatePage(member) {
 </html>`;
 }
 
-function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
+function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) {
   const config = { level2: 100, level3: 300, level4: 700 }; // แค่ใช้แสดงผล progress bar คร่าวๆ (ค่าจริงคำนวณฝั่งเซิร์ฟเวอร์)
   const thresholds = { 1: 0, 2: config.level2, 3: config.level3, 4: config.level4 };
   const nextThreshold = pet.isMaxLevel ? pet.exp : thresholds[pet.level + 1];
@@ -557,7 +558,7 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
     .map((b) => `<span class="badge-chip" title="${b.pet_badges?.description || ''}">🏅 ${b.pet_badges?.name_th}</span>`)
     .join('');
 
-  const equippedItems = inventory.filter((i) => i.equipped);
+  const equippedItems = closet.filter((i) => i.equipped);
 
   return `<!DOCTYPE html>
 <html lang="th">
@@ -582,7 +583,6 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
   .bar-fill { height: 100%; border-radius: 999px; transition: width 0.3s; }
   .btn-row { display: flex; gap: 8px; margin-top: 16px; }
   .btn-row button { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; cursor: pointer; }
-  .btn-feed { background: #06c755; color: white; }
   .btn-play { background: #ff5b2e; color: white; }
   .btn-row button:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
   .status-msg { font-size: 13px; text-align: center; margin-top: 10px; min-height: 18px; }
@@ -590,16 +590,17 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
   .badge-chip { display: inline-block; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 10px; font-size: 12px; margin: 4px 4px 0 0; }
   .link-row { text-align: center; margin-top: 16px; font-size: 13px; }
   .link-row a { color: #2a78d6; text-decoration: none; }
-  .closet-section { border-top: 1px solid #f0f0f0; padding-top: 10px; }
-  .closet-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; }
-  .equip-btn { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .bag-section, .closet-section { border-top: 1px solid #f0f0f0; padding-top: 10px; }
+  .bag-item, .closet-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; }
+  .use-btn, .equip-btn { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .use-btn { background: #06c755; color: white; border-color: #06c755; }
   .equip-btn.equipped { background: #06c755; color: white; border-color: #06c755; }
   .notify-btn { width: 100%; background: #14161f; color: white; border: none; padding: 12px; border-radius: 10px; font-size: 13px; cursor: pointer; margin-top: 16px; }
 </style>
 </head>
 <body>
   <div class="card">
-    ${pet.isHungry ? `<div class="hungry-warning">🍖 ${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! รีบให้อาหารหน่อยนะ</div>` : ''}
+    ${pet.isHungry ? `<div class="hungry-warning">🍖 ${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! หยิบอาหารจากกระเป๋ามาให้หน่อยนะ</div>` : ''}
 
     <div class="pet-stage" style="background:${LEVEL_COLOR[pet.level]};">
       <div class="pet-emoji">${SPECIES_EMOJI[pet.species_id]}</div>
@@ -622,18 +623,34 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
     </div>
 
     <div class="btn-row">
-      <button id="feedBtn" class="btn-feed">🍚 ให้อาหาร</button>
       <button id="playBtn" class="btn-play">🎾 เล่นด้วย</button>
     </div>
     <p id="statusMsg" class="status-msg"></p>
 
     ${badgeChips ? `<div style="margin-top:12px;">${badgeChips}</div>` : ''}
 
+    <div class="bag-section">
+      <h3 style="font-size:14px; margin:16px 0 8px;">🎒 กระเป๋า (อาหาร/ขนม)</h3>
+      ${
+        bag.length
+          ? bag
+              .map(
+                (i) => `
+              <div class="bag-item">
+                <span>${i.pet_shop_items?.name || '-'} <span class="hint">x${i.quantity}</span></span>
+                <button class="use-btn" data-inventory="${i.id}">ให้เลย</button>
+              </div>`
+              )
+              .join('')
+          : `<p class="hint">กระเป๋าว่างเปล่า <a href="/api/member-action?do=pet_shop">ไปซื้ออาหารกันเถอะ</a></p>`
+      }
+    </div>
+
     <div class="closet-section">
       <h3 style="font-size:14px; margin:16px 0 8px;">🎀 ตู้เสื้อผ้า</h3>
       ${
-        inventory.length
-          ? inventory
+        closet.length
+          ? closet
               .map(
                 (i) => `
               <div class="closet-item">
@@ -656,7 +673,6 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
   </div>
 
   <script>
-    const feedBtn = document.getElementById('feedBtn');
     const playBtn = document.getElementById('playBtn');
     const statusMsg = document.getElementById('statusMsg');
     const hungryWarning = document.querySelector('.hungry-warning');
@@ -699,11 +715,16 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
       }
     }
 
-    async function doAction(action, btn) {
+    async function doAction(action, btn, bodyParams) {
       btn.disabled = true;
       statusMsg.textContent = 'กำลังทำรายการ...';
       try {
-        const res = await fetch('/api/member-action?do=' + action, { method: 'POST', credentials: 'same-origin' });
+        const options = { method: 'POST', credentials: 'same-origin' };
+        if (bodyParams) {
+          options.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+          options.body = new URLSearchParams(bodyParams).toString();
+        }
+        const res = await fetch('/api/member-action?do=' + action, options);
         const data = await res.json();
         if (!res.ok) {
           statusMsg.textContent = data.error || 'เกิดข้อผิดพลาด';
@@ -713,16 +734,32 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
         statusMsg.textContent = 'ได้ EXP +' + data.expGained + ' 🎉';
         updateBars(data);
         setTimeout(() => { statusMsg.textContent = ''; }, 2500);
+        return data;
       } catch (err) {
         statusMsg.textContent = 'เกิดข้อผิดพลาด: ' + err.message;
       } finally {
-        // เล่นได้วันละครั้งอยู่แล้ว/ให้อาหารได้เรื่อยๆ — ปลดล็อกปุ่มให้กดต่อได้เสมอ ยกเว้น action=pet_play ที่ server จะเตือนเองถ้าเล่นไปแล้ววันนี้
         btn.disabled = false;
       }
     }
 
-    feedBtn.addEventListener('click', () => doAction('pet_feed', feedBtn));
     playBtn.addEventListener('click', () => doAction('pet_play', playBtn));
+
+    document.querySelectorAll('.use-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const row = btn.closest('.bag-item');
+        const result = await doAction('pet_use_item', btn, { inventory_id: btn.dataset.inventory });
+        if (result && row) {
+          // ลดจำนวนที่โชว์ในกระเป๋าลง 1 โดยไม่ต้องโหลดหน้าใหม่ — ถ้าหมดแล้วเอาแถวนี้ออกเลย
+          const qtySpan = row.querySelector('span > span');
+          const currentQty = qtySpan ? parseInt(qtySpan.textContent.replace('x', ''), 10) : 1;
+          if (currentQty <= 1) {
+            row.remove();
+          } else if (qtySpan) {
+            qtySpan.textContent = 'x' + (currentQty - 1);
+          }
+        }
+      });
+    });
 
     document.querySelectorAll('.equip-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
