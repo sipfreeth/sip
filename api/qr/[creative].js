@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   // แก้/เพิ่ม creative ใหม่ได้จากหน้า Table Editor หรือหน้า Admin โดยไม่ต้อง deploy ใหม่
   const { data, error } = await supabase
     .from('creatives')
-    .select('destination_url, active')
+    .select('destination_url, active, campaign_type, promo_code, promo_instructions, campaign_name')
     .eq('creative_id', creative)
     .single();
 
@@ -47,9 +47,16 @@ export default async function handler(req, res) {
 
   // แทนที่จะไปหน้าโปรโมชั่นตรงๆ ให้ไปล็อกอิน LINE ก่อน เพื่อรู้ตัวตนแล้วให้แต้ม
   // creative_id ถูกส่งผ่าน state เพื่อให้ callback รู้ว่าต้องให้แต้มจาก creative ไหน
-  // และรู้ว่าเสร็จแล้วต้อง redirect ไปปลายทางไหน (encode มาด้วยกัน กัน SQL query ซ้ำ)
+  // และรู้ว่าเสร็จแล้วต้องทำอะไรต่อ (redirect ไปปลายทาง หรือโชว์หน้าโค้ดโปรโมชั่น) — encode มาด้วยกัน กัน SQL query ซ้ำ
   const state = Buffer.from(
-    JSON.stringify({ creative, destination: data.destination_url })
+    JSON.stringify({
+      creative,
+      destination: data.destination_url,
+      campaignType: data.campaign_type || 'link',
+      promoCode: data.promo_code || null,
+      promoInstructions: data.promo_instructions || null,
+      campaignName: data.campaign_name || null,
+    })
   ).toString('base64url');
 
   const lineAuthUrl = new URL('https://access.line.me/oauth2/v2.1/authorize');
