@@ -1312,13 +1312,14 @@ async function renderPetShopAdminTab(admin) {
   const items = itemsRes.data || [];
   const config = configRes.data || [];
 
-  const typeLabel = { food: '🍚 อาหาร', treat: '🍬 ขนม', accessory: '🎀 เครื่องแต่งกาย' };
+  const typeLabel = { food: '🍚 อาหาร', treat: '🍬 ขนม', supplement: '💪 อาหารเสริม', accessory: '🎀 เครื่องแต่งกาย' };
+  const slotLabel = { bow: 'โบว์', hat: 'หมวก', glasses: 'แว่นตา', mouth: 'เครื่องปาก', shoes: 'รองเท้า' };
 
   const itemRows = items
     .map(
       (item) => `
       <tr style="${item.active ? '' : 'opacity:0.5;'}">
-        <td>${typeLabel[item.item_type] || item.item_type}</td>
+        <td>${typeLabel[item.item_type] || item.item_type}${item.accessory_slot ? ` (${slotLabel[item.accessory_slot] || item.accessory_slot})` : ''}</td>
         <td>${item.name}</td>
         <td style="text-align:right;">${item.points_cost.toLocaleString()}</td>
         <td style="text-align:center;">${item.hunger_boost || '-'}</td>
@@ -1349,11 +1350,12 @@ async function renderPetShopAdminTab(admin) {
   return `
     <div class="section">
       <h2>เพิ่มไอเทมใหม่ในร้านค้า</h2>
-      <form method="POST" action="/api/admin/action?action=pet_shop_item_create" class="stack-form">
+      <form method="POST" action="/api/admin/action?action=pet_shop_item_create" class="stack-form" id="itemForm">
         <label>ประเภท</label>
-        <select name="item_type" required>
+        <select name="item_type" id="itemTypeSelect" required>
           <option value="food">🍚 อาหาร</option>
           <option value="treat">🍬 ขนม</option>
+          <option value="supplement">💪 อาหารเสริม (เตรียมไว้สำหรับ Phase Duel)</option>
           <option value="accessory">🎀 เครื่องแต่งกาย</option>
         </select>
         <label>ชื่อไอเทม</label>
@@ -1362,12 +1364,31 @@ async function renderPetShopAdminTab(admin) {
         <input type="text" name="description" />
         <label>ราคา (Point)</label>
         <input type="number" name="points_cost" min="0" required />
-        <label>เพิ่มความอิ่ม (% — เฉพาะอาหาร/ขนม)</label>
-        <input type="number" name="hunger_boost" min="0" max="100" value="0" />
-        <label>เพิ่มความสุข (% — เฉพาะอาหาร/ขนม)</label>
-        <input type="number" name="happiness_boost" min="0" max="100" value="0" />
+        <div id="foodFields">
+          <label>เพิ่มความอิ่ม (% — เฉพาะอาหาร/ขนม)</label>
+          <input type="number" name="hunger_boost" min="0" max="100" value="0" />
+          <label>เพิ่มความสุข (% — เฉพาะอาหาร/ขนม)</label>
+          <input type="number" name="happiness_boost" min="0" max="100" value="0" />
+        </div>
+        <div id="accessoryFields" style="display:none;">
+          <label>ประเภทเครื่องแต่งกาย (Slot — สวมได้ทีละ 1 ชิ้นต่อ Slot)</label>
+          <select name="accessory_slot">
+            <option value="bow">โบว์</option>
+            <option value="hat">หมวก</option>
+            <option value="glasses">แว่นตา</option>
+            <option value="mouth">เครื่องปาก</option>
+            <option value="shoes">รองเท้า</option>
+          </select>
+        </div>
         <button type="submit" class="btn-primary" style="margin-top:12px;">เพิ่มไอเทม</button>
       </form>
+      <script>
+        document.getElementById('itemTypeSelect').addEventListener('change', function () {
+          const isAccessory = this.value === 'accessory';
+          document.getElementById('foodFields').style.display = isAccessory ? 'none' : 'block';
+          document.getElementById('accessoryFields').style.display = isAccessory ? 'block' : 'none';
+        });
+      </script>
     </div>
 
     <div class="section">
