@@ -666,7 +666,31 @@ export default async function handler(req, res) {
   if (actionParam === 'pet_shop_item_toggle') {
     const { data: item } = await supabase.from('pet_shop_items').select('active').eq('id', params.get('item_id')).single();
     await supabase.from('pet_shop_items').update({ active: !item?.active }).eq('id', params.get('item_id'));
-    res.writeHead(302, { Location: '/api/admin/pet-shop' });
+    const q = params.get('q');
+    res.writeHead(302, { Location: `/api/admin/pet-shop${q ? `?q=${encodeURIComponent(q)}` : ''}` });
+    res.end();
+    return;
+  }
+
+  if (actionParam === 'pet_shop_item_update') {
+    const itemType = params.get('item_type');
+    const { error } = await supabase
+      .from('pet_shop_items')
+      .update({
+        name: params.get('name'),
+        description: params.get('description') || null,
+        points_cost: Number(params.get('points_cost') || 0),
+        hunger_boost: Number(params.get('hunger_boost') || 0),
+        happiness_boost: Number(params.get('happiness_boost') || 0),
+        accessory_slot: itemType === 'accessory' ? params.get('accessory_slot') : null,
+      })
+      .eq('id', params.get('item_id'));
+    if (error) {
+      res.status(400).send(`บันทึกไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+    const q = params.get('q');
+    res.writeHead(302, { Location: `/api/admin/pet-shop${q ? `?q=${encodeURIComponent(q)}` : ''}` });
     res.end();
     return;
   }
