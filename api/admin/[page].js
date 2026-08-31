@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabaseClient.js';
 import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { requireAdmin, can } from '../../lib/adminAuth.js';
 import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
-import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
+import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent, getAiringStatus, AIRING_STATUS_LABEL } from '../../lib/sponsorArea.js';
 import { getAdminChatThreads } from '../../lib/chat.js';
 
 const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat', 'pet-shop'];
@@ -1122,6 +1122,10 @@ async function renderSponsorsTab(admin, query) {
       const isRejectedReleased = b.payment_status === 'refunded' && b.approval_status === 'rejected';
       const isExpired = b.payment_status === 'unpaid' && (!b.reserved_until || new Date(b.reserved_until) < new Date());
       const approvalLabel = { pending: 'รอตรวจสอบ', approved: 'ผ่านแล้ว', rejected: 'ไม่ผ่าน' }[b.approval_status] || b.approval_status;
+      const airingStatus = getAiringStatus(b);
+      const airingHtml = airingStatus
+        ? `<span style="color:${AIRING_STATUS_LABEL[airingStatus].color}; font-weight:600;">${AIRING_STATUS_LABEL[airingStatus].text}</span>`
+        : '<span class="hint">-</span>';
       return `
         <tr style="${isExpired || isRejectedReleased ? 'opacity:0.5;' : ''}">
           <td>${b.sponsors?.company_name || '-'} <span class="hint">(${b.sponsors?.sponsor_code || '-'})</span></td>
@@ -1144,6 +1148,7 @@ async function renderSponsorsTab(admin, query) {
             }
           </td>
           <td style="text-align:center;">${approvalLabel}</td>
+          <td style="text-align:center;">${airingHtml}</td>
           <td style="text-align:center;">
             <form method="POST" action="/api/admin/action?action=booking_cancel" onsubmit="return confirm('ลบรายการนี้ทิ้งถาวร?')" style="display:inline;">
               <input type="hidden" name="booking_id" value="${b.id}" />
@@ -1173,8 +1178,8 @@ async function renderSponsorsTab(admin, query) {
       <h2>การจองทั้งหมด (ภาพรวม)</h2>
       <a href="/api/admin/action?action=export_bookings" class="btn-small" style="display:inline-block; margin-bottom:8px;">📥 Export ประวัติการจองทั้งหมด (CSV)</a>
       <table>
-        <tr><th>Sponsor</th><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th><th></th></tr>
-        ${bookingRows || '<tr><td colspan="8" class="muted">ยังไม่มีการจอง</td></tr>'}
+        <tr><th>Sponsor</th><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์</th><th style="text-align:right;">ราคา</th><th style="text-align:center;">ชำระเงิน</th><th style="text-align:center;">ตรวจสอบไฟล์</th><th style="text-align:center;">สถานะขึ้นจอ</th><th></th></tr>
+        ${bookingRows || '<tr><td colspan="9" class="muted">ยังไม่มีการจอง</td></tr>'}
       </table>
     </div>
     <style>
