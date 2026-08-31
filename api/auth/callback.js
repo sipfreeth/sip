@@ -256,11 +256,69 @@ export default async function handler(req, res) {
   }
 
   const spendableBalance = await getSpendableBalance(member.id);
+
+  // ถ้า Campaign นี้เป็นแบบ "โค้ดโปรโมชั่น" ไม่ต้อง redirect ออกไปไหน โชว์หน้าโค้ดในระบบเราเลย
+  if (parsedState.campaignType === 'promo_code') {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(
+      renderPromoCodePage({
+        campaignName: parsedState.campaignName,
+        promoCode: parsedState.promoCode,
+        promoInstructions: parsedState.promoInstructions,
+        spendableBalance,
+        alreadyClaimedToday,
+      })
+    );
+    return;
+  }
+
   const finalUrl = new URL(destination);
   finalUrl.searchParams.set('points', spendableBalance);
   if (alreadyClaimedToday) finalUrl.searchParams.set('already_claimed', '1');
   res.writeHead(302, { Location: finalUrl.toString() });
   res.end();
+}
+
+function renderPromoCodePage({ campaignName, promoCode, promoInstructions, spendableBalance, alreadyClaimedToday }) {
+  return `<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="/theme.css" />
+<script src="/theme.js" defer></script>
+<title>โค้ดโปรโมชั่น</title>
+<style>
+  body { font-family: sans-serif; background: #f7f8fa; margin: 0; padding: 24px; color: #1b1f27; text-align: center; }
+  .card { background: white; border-radius: 16px; padding: 32px 24px; max-width: 420px; margin: 24px auto 0; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .campaign-name { color: #6b7280; font-size: 14px; margin: 0 0 16px; }
+  .code-box { background: #14161f; color: white; font-size: 28px; font-weight: 700; letter-spacing: 3px; padding: 20px; border-radius: 12px; margin-bottom: 16px; word-break: break-all; }
+  .copy-btn { background: #ff5b2e; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; width: 100%; }
+  .instructions { color: #6b7280; font-size: 13px; margin-top: 16px; text-align: left; background: #f7f8fa; padding: 12px; border-radius: 8px; }
+  .points-note { color: #9ca3af; font-size: 12px; margin-top: 20px; }
+  .already-note { color: #d4a017; font-size: 12px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    ${campaignName ? `<p class="campaign-name">${campaignName}</p>` : ''}
+    ${alreadyClaimedToday ? `<p class="already-note">วันนี้เคยสแกนแคมเปญนี้ไปแล้ว แต้มไม่เพิ่มซ้ำ แต่ยังใช้โค้ดได้ตามปกติ</p>` : ''}
+    <p style="font-size:15px; font-weight:600; margin:0 0 4px;">🎁 โค้ดส่วนลดของคุณ</p>
+    <p style="font-size:13px; color:#6b7280; margin:0 0 16px;">แคปหน้าจอหรือกดคัดลอก แล้วนำไปใช้ที่ร้านได้เลย</p>
+    <div class="code-box" id="promoCode">${promoCode || '-'}</div>
+    <button class="copy-btn" onclick="copyCode()">📋 คัดลอกโค้ด</button>
+    ${promoInstructions ? `<div class="instructions">${promoInstructions}</div>` : ''}
+    <p class="points-note">Point สะสมของคุณตอนนี้: ${spendableBalance.toLocaleString()}</p>
+  </div>
+  <script>
+    function copyCode() {
+      navigator.clipboard.writeText(document.getElementById('promoCode').textContent.trim())
+        .then(() => alert('คัดลอกโค้ดแล้ว!'))
+        .catch(() => alert('คัดลอกไม่สำเร็จ กรุณาแคปหน้าจอแทน'));
+    }
+  </script>
+</body>
+</html>`;
 }
 
 function renderPointsPage(member, history, tierScore, spendableBalance) {
