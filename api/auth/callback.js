@@ -534,7 +534,9 @@ function renderPetCreatePage(member) {
         body: new URLSearchParams(formData).toString(),
       });
       if (res.ok) {
-        window.location.reload();
+        // ห้ามใช้ location.reload() เพราะหน้านี้มาจาก URL ที่มีรหัสยืนยันตัวตนแบบใช้ครั้งเดียวติดอยู่
+        // ต้องไปเริ่มลิงก์ใหม่แทน ถึงจะได้รหัสใหม่มาใช้
+        window.location.href = '/api/member-action?do=pet';
       } else {
         alert(await res.text());
       }
@@ -607,16 +609,16 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
     </div>
 
     <div class="bar-row">
-      <div class="bar-label"><span>ความอิ่ม</span><span>${pet.hunger}%</span></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${pet.hunger}%; background:#06c755;"></div></div>
+      <div class="bar-label"><span>ความอิ่ม</span><span id="hungerLabel">${pet.hunger}%</span></div>
+      <div class="bar-track"><div class="bar-fill" id="hungerFill" style="width:${pet.hunger}%; background:#06c755;"></div></div>
     </div>
     <div class="bar-row">
-      <div class="bar-label"><span>ความสุข</span><span>${pet.happiness}%</span></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${pet.happiness}%; background:#ff5b2e;"></div></div>
+      <div class="bar-label"><span>ความสุข</span><span id="happinessLabel">${pet.happiness}%</span></div>
+      <div class="bar-track"><div class="bar-fill" id="happinessFill" style="width:${pet.happiness}%; background:#ff5b2e;"></div></div>
     </div>
     <div class="bar-row">
-      <div class="bar-label"><span>EXP (${pet.levelName})</span><span>${pet.isMaxLevel ? 'สูงสุดแล้ว' : expProgress + '%'}</span></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${pet.isMaxLevel ? 100 : expProgress}%; background:#2a78d6;"></div></div>
+      <div class="bar-label"><span>EXP (${pet.levelName})</span><span id="expLabel">${pet.isMaxLevel ? 'สูงสุดแล้ว' : expProgress + '%'}</span></div>
+      <div class="bar-track"><div class="bar-fill" id="expFill" style="width:${pet.isMaxLevel ? 100 : expProgress}%; background:#2a78d6;"></div></div>
     </div>
 
     <div class="btn-row">
@@ -657,6 +659,45 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
     const feedBtn = document.getElementById('feedBtn');
     const playBtn = document.getElementById('playBtn');
     const statusMsg = document.getElementById('statusMsg');
+    const hungryWarning = document.querySelector('.hungry-warning');
+
+    // ค่าขั้นบันไดของแต่ละระดับ (เอาไว้คำนวณแถบ EXP ใหม่หลังได้ EXP เพิ่ม โดยไม่ต้องโหลดหน้าใหม่)
+    const levelThresholds = { 1: 0, 2: 100, 3: 300, 4: 700 };
+    let currentLevel = ${pet.level};
+
+    function updateBars(data) {
+      const hunger = Math.min(100, data.newHunger ?? ${pet.hunger});
+      const happiness = Math.min(100, data.newHappiness ?? ${pet.happiness});
+      const exp = data.newExp;
+
+      document.getElementById('hungerLabel').textContent = hunger + '%';
+      document.getElementById('hungerFill').style.width = hunger + '%';
+      document.getElementById('happinessLabel').textContent = happiness + '%';
+      document.getElementById('happinessFill').style.width = happiness + '%';
+
+      if (hungryWarning) hungryWarning.style.display = hunger < 30 ? 'block' : 'none';
+
+      if (typeof exp === 'number') {
+        // หาระดับใหม่จาก EXP (ง่ายกว่าการ redirect ไปคำนวณฝั่งเซิร์ฟเวอร์ใหม่)
+        let newLevel = 1;
+        if (exp >= levelThresholds[4]) newLevel = 4;
+        else if (exp >= levelThresholds[3]) newLevel = 3;
+        else if (exp >= levelThresholds[2]) newLevel = 2;
+
+        if (newLevel > currentLevel) {
+          // เลื่อนระดับ! ข้อมูลอื่น (ภาพ/สี) เปลี่ยนด้วย ง่ายสุดคือไปเริ่มลิงก์ใหม่รอบเดียวตอนนี้
+          window.location.href = '/api/member-action?do=pet';
+          return;
+        }
+
+        const isMax = newLevel === 4;
+        const currentThreshold = levelThresholds[newLevel];
+        const nextThreshold = isMax ? exp : levelThresholds[newLevel + 1];
+        const progress = isMax ? 100 : Math.round(((exp - currentThreshold) / (nextThreshold - currentThreshold)) * 100);
+        document.getElementById('expLabel').textContent = isMax ? 'สูงสุดแล้ว' : progress + '%';
+        document.getElementById('expFill').style.width = (isMax ? 100 : progress) + '%';
+      }
+    }
 
     async function doAction(action, btn) {
       btn.disabled = true;
@@ -670,9 +711,12 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
           return;
         }
         statusMsg.textContent = 'ได้ EXP +' + data.expGained + ' 🎉';
-        setTimeout(() => window.location.reload(), 800);
+        updateBars(data);
+        setTimeout(() => { statusMsg.textContent = ''; }, 2500);
       } catch (err) {
         statusMsg.textContent = 'เกิดข้อผิดพลาด: ' + err.message;
+      } finally {
+        // เล่นได้วันละครั้งอยู่แล้ว/ให้อาหารได้เรื่อยๆ — ปลดล็อกปุ่มให้กดต่อได้เสมอ ยกเว้น action=pet_play ที่ server จะเตือนเองถ้าเล่นไปแล้ววันนี้
         btn.disabled = false;
       }
     }
@@ -690,7 +734,8 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ inventory_id: btn.dataset.inventory, equipped: String(!currentlyEquipped) }).toString(),
         });
-        window.location.reload();
+        // ห้ามใช้ location.reload() เพราะหน้านี้มาจาก URL ที่มีรหัสยืนยันตัวตนแบบใช้ครั้งเดียวติดอยู่
+        window.location.href = '/api/member-action?do=pet';
       });
     });
 
