@@ -629,11 +629,11 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
 
     ${badgeChips ? `<div style="margin-top:12px;">${badgeChips}</div>` : ''}
 
-    ${
-      inventory.length
-        ? `<div class="closet-section">
-            <h3 style="font-size:14px; margin:16px 0 8px;">🎀 ตู้เสื้อผ้า</h3>
-            ${inventory
+    <div class="closet-section">
+      <h3 style="font-size:14px; margin:16px 0 8px;">🎀 ตู้เสื้อผ้า</h3>
+      ${
+        inventory.length
+          ? inventory
               .map(
                 (i) => `
               <div class="closet-item">
@@ -643,10 +643,10 @@ function renderPetDashboard(member, pet, inventory, badges, spendableBalance) {
                 </button>
               </div>`
               )
-              .join('')}
-          </div>`
-        : ''
-    }
+              .join('')
+          : `<p class="hint">ยังไม่มีเครื่องแต่งกายเลย <a href="/api/member-action?do=pet_shop">ไปซื้อที่ร้านค้ากันเถอะ</a></p>`
+      }
+    </div>
 
     <button id="notifyBtn" class="notify-btn">🔔 เปิดการแจ้งเตือนเมื่อสัตว์เลี้ยงหิว</button>
 
