@@ -644,13 +644,15 @@ export default async function handler(req, res) {
 
   // ---------- จัดการร้านค้าเกมเลี้ยงสัตว์ (อาหาร/ขนม/เครื่องแต่งกาย) ----------
   if (actionParam === 'pet_shop_item_create') {
+    const itemType = params.get('item_type');
     const { error } = await supabase.from('pet_shop_items').insert({
-      item_type: params.get('item_type'),
+      item_type: itemType,
       name: params.get('name'),
       description: params.get('description') || null,
       points_cost: Number(params.get('points_cost') || 0),
       hunger_boost: Number(params.get('hunger_boost') || 0),
       happiness_boost: Number(params.get('happiness_boost') || 0),
+      accessory_slot: itemType === 'accessory' ? params.get('accessory_slot') : null,
     });
     if (error) {
       res.status(400).send(`เพิ่มไอเทมไม่สำเร็จ: ${error.message}`);
