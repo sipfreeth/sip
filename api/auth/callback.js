@@ -645,6 +645,7 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
   .btn-row button:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
   .status-msg { font-size: 13px; text-align: center; margin-top: 10px; min-height: 18px; }
   .hungry-warning { background: #fff1ec; color: #e76f51; padding: 10px; border-radius: 8px; font-size: 13px; text-align: center; margin-bottom: 12px; }
+  .sick-warning { background: #fee2e2; color: #dc2626; padding: 10px; border-radius: 8px; font-size: 13px; text-align: center; margin-bottom: 12px; font-weight: 600; }
   .badge-chip { display: inline-block; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 10px; font-size: 12px; margin: 4px 4px 0 0; }
   .link-row { text-align: center; margin-top: 16px; font-size: 13px; }
   .link-row a { color: #2a78d6; text-decoration: none; }
@@ -658,7 +659,13 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
 </head>
 <body>
   <div class="card">
-    ${pet.isHungry ? `<div class="hungry-warning">🍖 ${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! หยิบอาหารจากกระเป๋ามาให้หน่อยนะ</div>` : ''}
+    ${
+      pet.isSick
+        ? `<div class="sick-warning">🤒 ${pet.name || 'สัตว์เลี้ยง'}ป่วยแล้ว! ต้องใช้ยารักษาก่อนถึงจะเล่นด้วย/ได้ EXP ได้ตามปกติ</div>`
+        : pet.isHungry
+        ? `<div class="hungry-warning">🍖 ${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! หยิบอาหารจากกระเป๋ามาให้หน่อยนะ</div>`
+        : ''
+    }
 
     <div class="pet-stage" style="background:${LEVEL_COLOR[pet.level]};">
       <div class="pet-emoji">${SPECIES_EMOJI[pet.species_id]}</div>
@@ -681,22 +688,22 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
     </div>
 
     <div class="btn-row">
-      <button id="playBtn" class="btn-play">🎾 เล่นด้วย</button>
+      <button id="playBtn" class="btn-play" ${pet.isSick ? 'disabled title="สัตว์เลี้ยงป่วยอยู่ ต้องรักษาให้หายก่อน"' : ''}>🎾 เล่นด้วย</button>
     </div>
     <p id="statusMsg" class="status-msg"></p>
 
     ${badgeChips ? `<div style="margin-top:12px;">${badgeChips}</div>` : ''}
 
     <div class="bag-section">
-      <h3 style="font-size:14px; margin:16px 0 8px;">🎒 กระเป๋า (อาหาร/ขนม)</h3>
+      <h3 style="font-size:14px; margin:16px 0 8px;">🎒 กระเป๋า (อาหาร/ขนม/ยา)</h3>
       ${
         bag.length
           ? bag
               .map(
                 (i) => `
               <div class="bag-item">
-                <span>${i.pet_shop_items?.name || '-'} <span class="hint">x${i.quantity}</span></span>
-                <button class="use-btn" data-inventory="${i.id}">ให้เลย</button>
+                <span>${i.pet_shop_items?.item_type === 'medicine' ? '💊 ' : ''}${i.pet_shop_items?.name || '-'} <span class="hint">x${i.quantity}</span></span>
+                <button class="use-btn" data-inventory="${i.id}">${i.pet_shop_items?.item_type === 'medicine' ? 'ใช้ยา' : 'ให้เลย'}</button>
               </div>`
               )
               .join('')
@@ -806,6 +813,12 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
       btn.addEventListener('click', async () => {
         const row = btn.closest('.bag-item');
         const result = await doAction('pet_use_item', btn, { inventory_id: btn.dataset.inventory });
+        if (result && result.cured) {
+          // รักษาหายแล้ว — ต้องโหลดหน้าใหม่เพื่ออัปเดต Banner ป่วย/ปุ่มเล่นด้วยให้ตรงสถานะ
+          statusMsg.textContent = 'รักษาหายแล้ว! 🎉';
+          setTimeout(() => window.location.href = '/api/member-action?do=pet', 800);
+          return;
+        }
         if (result && row) {
           // ลดจำนวนที่โชว์ในกระเป๋าลง 1 โดยไม่ต้องโหลดหน้าใหม่ — ถ้าหมดแล้วเอาแถวนี้ออกเลย
           const qtySpan = row.querySelector('span > span');
