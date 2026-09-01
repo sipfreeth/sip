@@ -14,7 +14,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getTier, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { createRedeemToken } from '../../lib/memberToken.js';
-import { getMemberPet, getPetBag, getPetCloset, getPetBadges, SPECIES_LIST } from '../../lib/petGame.js';
+import { getMemberPet, getPetBag, getPetCloset, getPetBadges, addPetExpFromScan, SPECIES_LIST } from '../../lib/petGame.js';
 import { createMemberSessionCookie } from '../../lib/memberAuth.js';
 
 const supabase = createClient(
@@ -252,6 +252,10 @@ export default async function handler(req, res) {
     if (ledgerError) {
       // เผื่อ race condition (สแกนพร้อมกัน 2 ครั้งในเสี้ยววินาที) — unique constraint กันซ้ำอีกชั้น
       alreadyClaimedToday = true;
+    } else {
+      // ให้ EXP สัตว์เลี้ยงด้วย — ใช้เงื่อนไขเดียวกับ Tier Score เป๊ะ (วันละ 1 ครั้งต่อแคมเปญ)
+      // ถ้าสมาชิกยังไม่มีสัตว์เลี้ยง หรือสัตว์เลี้ยงป่วยอยู่ ฟังก์ชันนี้จะข้ามให้เองโดยไม่ error
+      await addPetExpFromScan(member.id);
     }
   }
 
@@ -685,6 +689,7 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
     <div class="bar-row">
       <div class="bar-label"><span>EXP (${pet.levelName})</span><span id="expLabel">${pet.isMaxLevel ? 'สูงสุดแล้ว' : expProgress + '%'}</span></div>
       <div class="bar-track"><div class="bar-fill" id="expFill" style="width:${pet.isMaxLevel ? 100 : expProgress}%; background:#2a78d6;"></div></div>
+      <p class="hint" style="margin:4px 0 0;">EXP ได้จากการสแกน QR โฆษณาเท่านั้น (วันละ 1 ครั้งต่อแคมเปญ)</p>
     </div>
 
     <div class="btn-row">
@@ -796,7 +801,7 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
           btn.disabled = false;
           return;
         }
-        statusMsg.textContent = 'ได้ EXP +' + data.expGained + ' 🎉';
+        statusMsg.textContent = data.expGained > 0 ? 'ได้ EXP +' + data.expGained + ' 🎉' : 'ทำสำเร็จ! 🎉';
         updateBars(data);
         setTimeout(() => { statusMsg.textContent = ''; }, 2500);
         return data;
