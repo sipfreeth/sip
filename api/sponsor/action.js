@@ -39,6 +39,7 @@ import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
+import { sendAlertEmail } from '../../lib/alerts.js';
 
 async function readBody(req) {
   let body = '';
@@ -235,10 +236,19 @@ export default async function handler(req, res) {
 
     const charge = event?.data;
     if (charge?.object === 'charge' && charge.id && charge.paid) {
-      await supabase
+      const { error } = await supabase
         .from('slot_bookings')
         .update({ payment_status: 'paid', payment_method: 'omise' })
         .eq('omise_charge_id', charge.id);
+
+      if (error) {
+        // จุดนี้อันตรายมาก — ลูกค้าจ่ายเงินจริงแล้ว (Omise ยืนยัน charge.paid = true) แต่ระบบบันทึกไม่สำเร็จ ต้องรู้ทันที
+        console.error('❌ บันทึกสถานะจ่ายเงิน (Omise) ไม่สำเร็จ:', error.message, 'charge_id:', charge.id);
+        await sendAlertEmail(
+          'บันทึกการชำระเงิน Omise ไม่สำเร็จ (ลูกค้าจ่ายแล้วแต่ระบบไม่บันทึก)',
+          `Charge ID: ${charge.id}\nError: ${error.message}\n\nกรุณาตรวจสอบและอัปเดตสถานะการจองด้วยมือด่วน`
+        );
+      }
     }
     res.status(200).send('ok');
     return;
@@ -738,6 +748,9 @@ export default async function handler(req, res) {
 
       res.status(200).json({ paid: false, message: result.data?.message || 'ตรวจสอบสลิปไม่ผ่าน' });
     } catch (err) {
+      // จุดนี้คือ SlipOK/ระบบเราเองล้มเหลวทางเทคนิคจริงๆ (คนละเรื่องกับ "ยอดสลิปไม่ตรง" ที่เป็นผลลัพธ์ปกติทางธุรกิจ)
+      console.error('❌ ตรวจสอบสลิปล้มเหลว (SlipOK):', err.message, 'group_id:', groupId);
+      await sendAlertEmail('ตรวจสอบสลิปโอนเงินล้มเหลว (SlipOK)', `Group ID: ${groupId}\nError: ${err.message}\n\nอาจต้องตรวจสอบสลิปนี้ด้วยมือแทน`);
       res.status(500).json({ error: err.message });
     }
     return;
