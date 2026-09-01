@@ -16,6 +16,7 @@ import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
+import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 
 async function readBody(req) {
   let body = '';
@@ -37,6 +38,14 @@ export default async function handler(req, res) {
       const params = await readBody(req);
       const username = (params.get('username') || '').trim();
       const password = params.get('password') || '';
+      const ipAddress = getClientIp(req);
+
+      const withinLimit = await checkLoginRateLimit(ipAddress, 'office');
+      if (!withinLimit) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderLoginPage(LOGIN_LOCKOUT_MESSAGE));
+        return;
+      }
 
       const { data: office } = await supabase
         .from('office_accounts')
@@ -47,11 +56,13 @@ export default async function handler(req, res) {
       const validPassword = office ? await bcrypt.compare(password, office.password_hash) : false;
 
       if (!office || !validPassword) {
+        await recordLoginAttempt(ipAddress, 'office', false);
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.status(200).send(renderLoginPage('Username หรือ Password ไม่ถูกต้อง'));
         return;
       }
 
+      await recordLoginAttempt(ipAddress, 'office', true);
       res.setHeader('Set-Cookie', createOfficeSessionCookie(office.id));
       res.writeHead(302, { Location: '/api/office' });
       res.end();
