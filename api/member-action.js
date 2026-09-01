@@ -272,16 +272,17 @@ export default async function handler(req, res) {
         res.end();
         return;
       }
-      const [foodItems, treatItems, supplementItems, accessoryItems] = await Promise.all([
+      const [foodItems, treatItems, supplementItems, medicineItems, accessoryItems] = await Promise.all([
         getShopItems('food'),
         getShopItems('treat'),
         getShopItems('supplement'),
+        getShopItems('medicine'),
         getShopItems('accessory'),
       ]);
       const closet = await getPetCloset(pet.id);
       const ownedAccessoryIds = new Set(closet.map((i) => i.shop_item_id));
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.status(200).send(renderPetShopPage({ foodItems, treatItems, supplementItems, accessoryItems, ownedAccessoryIds }));
+      res.status(200).send(renderPetShopPage({ foodItems, treatItems, supplementItems, medicineItems, accessoryItems, ownedAccessoryIds }));
       return;
     }
   }
@@ -300,24 +301,23 @@ export default async function handler(req, res) {
       const threshold = Number(config?.[0]?.value || 30);
       const cooldownMs = 6 * 60 * 60 * 1000; // แจ้งซ้ำได้ไม่เกินทุก 6 ชั่วโมง กันสแปม
 
-      const { data: hungryPets } = await supabase
+      const { data: needAttentionPets } = await supabase
         .from('member_pets')
-        .select('id, member_id, hunger, name, last_hunger_notified_at')
-        .lt('hunger', threshold);
+        .select('id, member_id, hunger, is_sick, name, last_hunger_notified_at')
+        .or(`hunger.lt.${threshold},is_sick.eq.true`);
 
       let sentCount = 0;
-      for (const pet of hungryPets || []) {
+      for (const pet of needAttentionPets || []) {
         const lastNotified = pet.last_hunger_notified_at ? new Date(pet.last_hunger_notified_at).getTime() : 0;
         if (Date.now() - lastNotified < cooldownMs) continue;
 
         const { data: subs } = await supabase.from('push_subscriptions').select('*').eq('member_id', pet.member_id);
         for (const sub of subs || []) {
           try {
-            await sendPushNotification(sub, {
-              title: `${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! 🍖`,
-              body: 'กลับมาให้อาหารกันเถอะ',
-              url: '/api/member-action?do=pet',
-            });
+            await sendPushNotification(sub, pet.is_sick
+              ? { title: `${pet.name || 'สัตว์เลี้ยง'}ป่วยแล้ว! ต้องใช้ยารักษาด่วน 🤒`, body: 'รีบซื้อยารักษาจากร้านค้า', url: '/api/member-action?do=pet' }
+              : { title: `${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! 🍖`, body: 'กลับมาให้อาหารกันเถอะ', url: '/api/member-action?do=pet' }
+            );
             sentCount++;
           } catch (err) {
             // subscription หมดอายุ/ถูกยกเลิกจากฝั่งเบราว์เซอร์ — ลบทิ้งกันค้าง (ไม่ใช่ปัญหาของระบบเรา ไม่ต้องแจ้งเตือน)
@@ -329,7 +329,7 @@ export default async function handler(req, res) {
         await supabase.from('member_pets').update({ last_hunger_notified_at: new Date().toISOString() }).eq('id', pet.id);
       }
 
-      res.status(200).json({ checked: (hungryPets || []).length, sent: sentCount });
+      res.status(200).json({ checked: (needAttentionPets || []).length, sent: sentCount });
     } catch (err) {
       // Cron Job ทั้งตัวพัง (ไม่ใช่แค่ Push รายตัว) — จุดนี้ต้องแจ้งเตือนทันที เพราะถ้าไม่แจ้งจะไม่มีใครรู้เลยว่าระบบหยุดเช็คความหิวไปแล้ว
       console.error('❌ cron_hunger_check พังทั้งยวง:', err);
@@ -370,7 +370,7 @@ function renderSuccessPage(reward, newBalance) {
 
 const ACCESSORY_SLOT_LABEL = { bow: '🎀 โบว์', hat: '🎩 หมวก', glasses: '👓 แว่นตา', mouth: '👄 เครื่องปาก', shoes: '👟 รองเท้า' };
 
-function renderPetShopPage({ foodItems, treatItems, supplementItems, accessoryItems, ownedAccessoryIds }) {
+function renderPetShopPage({ foodItems, treatItems, supplementItems, medicineItems, accessoryItems, ownedAccessoryIds }) {
   const renderItemCard = (item, isOwned) => `
     <div class="shop-item">
       <div>
@@ -387,6 +387,7 @@ function renderPetShopPage({ foodItems, treatItems, supplementItems, accessoryIt
 
   const foodTreatItems = [...foodItems, ...treatItems];
   const foodHtml = foodTreatItems.map((i) => renderItemCard(i, false)).join('') || '<p class="muted">ยังไม่มีอาหาร/ขนมในร้าน</p>';
+  const medicineHtml = medicineItems.map((i) => renderItemCard(i, false)).join('') || '<p class="muted">ยังไม่มียาในร้าน</p>';
 
   // จัดกลุ่มเครื่องแต่งกายตาม Slot (โบว์/หมวก/แว่นตา/เครื่องปาก/รองเท้า)
   const bySlot = {};
@@ -431,6 +432,11 @@ function renderPetShopPage({ foodItems, treatItems, supplementItems, accessoryIt
     <h2>🍚 อาหาร</h2>
     <p class="hint" style="margin-top:-6px;">ซื้อแล้วเข้ากระเป๋า ไปเลือกให้ที่หน้าสัตว์เลี้ยงได้เลย</p>
     ${foodHtml}
+  </div>
+  <div class="card">
+    <h2>💊 ยารักษา</h2>
+    <p class="hint" style="margin-top:-6px;">ใช้ตอนสัตว์เลี้ยงป่วยเท่านั้น (หิว+เศร้าเหลือ 0% พร้อมกัน)</p>
+    ${medicineHtml}
   </div>
   <div class="card">
     <h2>💪 อาหารเสริม</h2>
