@@ -15,6 +15,7 @@ import { getCurrentYearStart } from '../lib/tiers.js';
 import { createPet, playWithPet, buyItem, useInventoryItem, toggleEquip, getMemberPet, getPetBag, getPetCloset, getShopItems, getPetBadges } from '../lib/petGame.js';
 import { getMemberFromSession } from '../lib/memberAuth.js';
 import { sendPushNotification } from '../lib/webpush.js';
+import { sendAlertEmail } from '../lib/alerts.js';
 
 async function getSpendableBalance(memberId) {
   const yearStart = getCurrentYearStart();
@@ -294,40 +295,47 @@ export default async function handler(req, res) {
       return;
     }
 
-    const { data: config } = await supabase.from('pet_game_config').select('key, value').eq('key', 'hunger_notify_threshold');
-    const threshold = Number(config?.[0]?.value || 30);
-    const cooldownMs = 6 * 60 * 60 * 1000; // แจ้งซ้ำได้ไม่เกินทุก 6 ชั่วโมง กันสแปม
+    try {
+      const { data: config } = await supabase.from('pet_game_config').select('key, value').eq('key', 'hunger_notify_threshold');
+      const threshold = Number(config?.[0]?.value || 30);
+      const cooldownMs = 6 * 60 * 60 * 1000; // แจ้งซ้ำได้ไม่เกินทุก 6 ชั่วโมง กันสแปม
 
-    const { data: hungryPets } = await supabase
-      .from('member_pets')
-      .select('id, member_id, hunger, name, last_hunger_notified_at')
-      .lt('hunger', threshold);
+      const { data: hungryPets } = await supabase
+        .from('member_pets')
+        .select('id, member_id, hunger, name, last_hunger_notified_at')
+        .lt('hunger', threshold);
 
-    let sentCount = 0;
-    for (const pet of hungryPets || []) {
-      const lastNotified = pet.last_hunger_notified_at ? new Date(pet.last_hunger_notified_at).getTime() : 0;
-      if (Date.now() - lastNotified < cooldownMs) continue;
+      let sentCount = 0;
+      for (const pet of hungryPets || []) {
+        const lastNotified = pet.last_hunger_notified_at ? new Date(pet.last_hunger_notified_at).getTime() : 0;
+        if (Date.now() - lastNotified < cooldownMs) continue;
 
-      const { data: subs } = await supabase.from('push_subscriptions').select('*').eq('member_id', pet.member_id);
-      for (const sub of subs || []) {
-        try {
-          await sendPushNotification(sub, {
-            title: `${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! 🍖`,
-            body: 'กลับมาให้อาหารกันเถอะ',
-            url: '/api/member-action?do=pet',
-          });
-          sentCount++;
-        } catch (err) {
-          // subscription หมดอายุ/ถูกยกเลิกจากฝั่งเบราว์เซอร์ — ลบทิ้งกันค้าง
-          if (err.statusCode === 410 || err.statusCode === 404) {
-            await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+        const { data: subs } = await supabase.from('push_subscriptions').select('*').eq('member_id', pet.member_id);
+        for (const sub of subs || []) {
+          try {
+            await sendPushNotification(sub, {
+              title: `${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! 🍖`,
+              body: 'กลับมาให้อาหารกันเถอะ',
+              url: '/api/member-action?do=pet',
+            });
+            sentCount++;
+          } catch (err) {
+            // subscription หมดอายุ/ถูกยกเลิกจากฝั่งเบราว์เซอร์ — ลบทิ้งกันค้าง (ไม่ใช่ปัญหาของระบบเรา ไม่ต้องแจ้งเตือน)
+            if (err.statusCode === 410 || err.statusCode === 404) {
+              await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+            }
           }
         }
+        await supabase.from('member_pets').update({ last_hunger_notified_at: new Date().toISOString() }).eq('id', pet.id);
       }
-      await supabase.from('member_pets').update({ last_hunger_notified_at: new Date().toISOString() }).eq('id', pet.id);
-    }
 
-    res.status(200).json({ checked: (hungryPets || []).length, sent: sentCount });
+      res.status(200).json({ checked: (hungryPets || []).length, sent: sentCount });
+    } catch (err) {
+      // Cron Job ทั้งตัวพัง (ไม่ใช่แค่ Push รายตัว) — จุดนี้ต้องแจ้งเตือนทันที เพราะถ้าไม่แจ้งจะไม่มีใครรู้เลยว่าระบบหยุดเช็คความหิวไปแล้ว
+      console.error('❌ cron_hunger_check พังทั้งยวง:', err);
+      await sendAlertEmail('Cron Job เช็คความหิวสัตว์เลี้ยงล้มเหลว', err.stack || err.message);
+      res.status(500).json({ error: 'cron failed', message: err.message });
+    }
     return;
   }
 
