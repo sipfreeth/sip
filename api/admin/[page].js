@@ -1322,7 +1322,7 @@ async function renderPetShopAdminTab(admin, query) {
   const items = itemsRes.data || [];
   const config = configRes.data || [];
 
-  const typeLabel = { food: '🍚 อาหาร', treat: '🍬 ขนม', supplement: '💪 อาหารเสริม', accessory: '🎀 เครื่องแต่งกาย' };
+  const typeLabel = { food: '🍚 อาหาร', treat: '🍬 ขนม', supplement: '💪 อาหารเสริม', medicine: '💊 ยารักษา', accessory: '🎀 เครื่องแต่งกาย' };
   const slotLabel = { bow: 'โบว์', hat: 'หมวก', glasses: 'แว่นตา', mouth: 'เครื่องปาก', shoes: 'รองเท้า' };
   const qParam = keyword ? `&q=${encodeURIComponent(keyword)}` : '';
 
@@ -1394,6 +1394,7 @@ async function renderPetShopAdminTab(admin, query) {
           <option value="food">🍚 อาหาร</option>
           <option value="treat">🍬 ขนม</option>
           <option value="supplement">💪 อาหารเสริม (เตรียมไว้สำหรับ Phase Duel)</option>
+          <option value="medicine">💊 ยารักษา (ใช้ตอนป่วยเท่านั้น)</option>
           <option value="accessory">🎀 เครื่องแต่งกาย</option>
         </select>
         <label>ชื่อไอเทม</label>
