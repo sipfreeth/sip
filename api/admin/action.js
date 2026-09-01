@@ -31,6 +31,7 @@ import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
 import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
 import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
 import { toCsv, sendCsv } from '../../lib/csv.js';
+import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 
 async function readBody(req) {
   let body = '';
@@ -52,6 +53,14 @@ export default async function handler(req, res) {
       const params = await readBody(req);
       const username = (params.get('username') || '').trim();
       const password = params.get('password') || '';
+      const ipAddress = getClientIp(req);
+
+      const withinLimit = await checkLoginRateLimit(ipAddress, 'admin');
+      if (!withinLimit) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderLoginPage(LOGIN_LOCKOUT_MESSAGE));
+        return;
+      }
 
       const { data: user } = await supabase
         .from('admin_users')
@@ -62,11 +71,13 @@ export default async function handler(req, res) {
       const validPassword = user ? await bcrypt.compare(password, user.password_hash) : false;
 
       if (!user || !validPassword) {
+        await recordLoginAttempt(ipAddress, 'admin', false);
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.status(200).send(renderLoginPage('Username หรือ Password ไม่ถูกต้อง'));
         return;
       }
 
+      await recordLoginAttempt(ipAddress, 'admin', true);
       res.setHeader('Set-Cookie', createSessionCookie(username));
       res.writeHead(302, { Location: '/api/admin/dashboard' });
       res.end();
