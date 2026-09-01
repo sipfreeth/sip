@@ -6,6 +6,7 @@
 //   2. Redirect คนไปหน้าโปรโมชั่นจริงของลูกค้า
 
 import { createClient } from '@supabase/supabase-js';
+import { getClientIp, checkScanRateLimit } from '../../lib/rateLimit.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,6 +16,14 @@ const supabase = createClient(
 export default async function handler(req, res) {
   const { creative } = req.query;
   const screenId = req.query.screen || null; // เผื่ออยากส่ง ?screen=LOBBY-A-01 มาด้วย
+  const ipAddress = getClientIp(req);
+
+  // กัน Bot สแกนถี่ผิดธรรมชาติ (เกณฑ์สูงมาก ไม่กระทบคนจริงสแกนพร้อมกันหลายคนจาก WiFi เดียวกัน)
+  const withinScanLimit = await checkScanRateLimit(ipAddress);
+  if (!withinScanLimit) {
+    res.status(429).send('มีการสแกนถี่ผิดปกติจากอุปกรณ์นี้ กรุณาลองใหม่อีกครั้งในภายหลัง');
+    return;
+  }
 
   // ดึงปลายทางจากตาราง creatives แทนการเขียนตายตัวในโค้ด
   // แก้/เพิ่ม creative ใหม่ได้จากหน้า Table Editor หรือหน้า Admin โดยไม่ต้อง deploy ใหม่
@@ -40,6 +49,7 @@ export default async function handler(req, res) {
       creative_id: creative,
       screen_id: screenId,
       scanned_at: new Date().toISOString(),
+      ip_address: ipAddress,
     });
   } catch (err) {
     console.error('บันทึก log ไม่สำเร็จ:', err);
