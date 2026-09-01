@@ -38,6 +38,7 @@ import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorAr
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
+import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 
 async function readBody(req) {
   let body = '';
@@ -115,16 +116,26 @@ export default async function handler(req, res) {
       const params = await readBody(req);
       const email = (params.get('email') || '').trim().toLowerCase();
       const password = params.get('password') || '';
+      const ipAddress = getClientIp(req);
+
+      const withinLimit = await checkLoginRateLimit(ipAddress, 'sponsor');
+      if (!withinLimit) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderLoginPage(LOGIN_LOCKOUT_MESSAGE));
+        return;
+      }
 
       const { data: sponsor } = await supabase.from('sponsors').select('id, password_hash').eq('email', email).maybeSingle();
       const valid = sponsor ? await bcrypt.compare(password, sponsor.password_hash) : false;
 
       if (!sponsor || !valid) {
+        await recordLoginAttempt(ipAddress, 'sponsor', false);
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.status(200).send(renderLoginPage('อีเมลหรือรหัสผ่านไม่ถูกต้อง'));
         return;
       }
 
+      await recordLoginAttempt(ipAddress, 'sponsor', true);
       res.setHeader('Set-Cookie', createSponsorSessionCookie(sponsor.id));
       res.writeHead(302, { Location: '/api/sponsor' });
       res.end();
