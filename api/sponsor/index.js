@@ -79,6 +79,7 @@ async function renderContentTab(sponsor) {
       <div class="section">
         <h2>อัปโหลดไฟล์ใหม่</h2>
         <p class="hint">รูปภาพ (JPEG, PNG) ไม่เกิน ${MAX_IMAGE_MB}MB — วิดีโอ (MP4) ไม่เกิน ${MAX_VIDEO_MB}MB และ**ความยาวไม่เกิน ${MAX_VIDEO_SECONDS} วินาที** — ใช้ได้สูงสุด ${MAX_FILES_PER_SPONSOR} ไฟล์ต่อบัญชี (ตอนนี้มี ${items.length}/${MAX_FILES_PER_SPONSOR})</p>
+        <p class="hint" style="color:#e76f51; font-weight:600;">⚠️ ไฟล์ต้องเป็นแนวนอน อัตราส่วน 16:9 เท่านั้น (เช่น 1920x1080) ตามสเปคจอที่ติดตั้งจริง ไฟล์สัดส่วนอื่นจะถูกปฏิเสธอัตโนมัติ</p>
         <p class="hint">อัปโหลดเสร็จใช้เลือกลง Slot ได้ทันที — Admin จะตรวจสอบตอนที่คุณเลือกใส่ Slot อีกครั้งก่อนขึ้นจอจริง</p>
         <form class="sponsor-upload-form">
           <input type="file" name="file" accept="image/jpeg,image/png,video/mp4" required />
@@ -132,6 +133,40 @@ async function renderContentTab(sponsor) {
             });
             if (!durationOk) {
               statusEl.textContent = 'วิดีโอต้องยาวไม่เกิน ${MAX_VIDEO_SECONDS} วินาที';
+              return;
+            }
+          }
+
+          // ---------- เช็คอัตราส่วนภาพ 16:9 ก่อนอัปโหลดจริง (เร็วกว่า ไม่เสียเวลาถ้าไฟล์ผิดสัดส่วน) ----------
+          statusEl.textContent = 'กำลังตรวจสอบอัตราส่วนไฟล์...';
+          const dims = await new Promise((resolve) => {
+            const objectUrl = URL.createObjectURL(file);
+            if (isVideo) {
+              const videoEl = document.createElement('video');
+              videoEl.preload = 'metadata';
+              videoEl.onloadedmetadata = () => {
+                URL.revokeObjectURL(objectUrl);
+                resolve({ width: videoEl.videoWidth, height: videoEl.videoHeight });
+              };
+              videoEl.onerror = () => resolve(null);
+              videoEl.src = objectUrl;
+            } else {
+              const img = new Image();
+              img.onload = () => {
+                URL.revokeObjectURL(objectUrl);
+                resolve({ width: img.naturalWidth, height: img.naturalHeight });
+              };
+              img.onerror = () => resolve(null);
+              img.src = objectUrl;
+            }
+          });
+
+          if (dims) {
+            const ratio = dims.width / dims.height;
+            const targetRatio = 16 / 9;
+            const withinTolerance = Math.abs(ratio - targetRatio) <= targetRatio * 0.05;
+            if (!withinTolerance) {
+              statusEl.textContent = 'ไฟล์นี้อัตราส่วน ' + dims.width + 'x' + dims.height + ' ไม่ตรงกับที่จอต้องการ (ต้องเป็นแนวนอน 16:9 เช่น 1920x1080)';
               return;
             }
           }
