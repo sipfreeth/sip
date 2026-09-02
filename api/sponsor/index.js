@@ -80,11 +80,21 @@ async function renderContentTab(sponsor) {
         <p class="hint">อัปโหลดเสร็จใช้เลือกลง Slot ได้ทันที — Admin จะตรวจสอบตอนที่คุณเลือกใส่ Slot อีกครั้งก่อนขึ้นจอจริง</p>
         <form class="sponsor-upload-form">
           <input type="file" name="file" accept="image/jpeg,image/png,video/mp4" required />
-          <label class="hint" style="display:block; margin-top:8px;">ไฟล์นี้ใช้คู่กับแคมเปญ QR ไหน (ไม่บังคับ)</label>
-          <select name="creative_id" class="table-input">
-            <option value="">-- ไม่ผูกกับแคมเปญไหน --</option>
+
+          <label style="display:block; margin-top:12px; font-weight:600; font-size:13px;">ไฟล์นี้ใช้คู่กับแคมเปญ QR ไหน? (ต้องเลือกอย่างใดอย่างหนึ่ง)</label>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:13px; cursor:pointer;">
+            <input type="radio" name="campaign_choice" value="none" required />
+            ไม่ผูกกับแคมเปญไหน
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:13px; cursor:pointer;">
+            <input type="radio" name="campaign_choice" value="pick" required />
+            เลือกผูกกับแคมเปญ
+          </label>
+          <select name="creative_id" class="table-input" id="campaignSelect" style="margin-top:6px; display:none;" disabled>
+            <option value="">-- เลือกแคมเปญ --</option>
             ${campaignOptions}
           </select>
+
           <button type="submit" class="btn-primary" style="margin-top:10px;">อัปโหลด</button>
           <p class="upload-status hint" style="margin-top:8px;"></p>
         </form>
@@ -173,6 +183,17 @@ async function renderContentTab(sponsor) {
 
       const form = document.querySelector('.sponsor-upload-form');
       if (form) {
+        const campaignSelect = document.getElementById('campaignSelect');
+        form.querySelectorAll('input[name="campaign_choice"]').forEach((radio) => {
+          radio.addEventListener('change', () => {
+            const isPick = radio.value === 'pick' && radio.checked;
+            campaignSelect.style.display = isPick ? 'block' : 'none';
+            campaignSelect.disabled = !isPick;
+            campaignSelect.required = isPick;
+            if (!isPick) campaignSelect.value = '';
+          });
+        });
+
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const fileInput = form.querySelector('input[name="file"]');
