@@ -63,10 +63,7 @@ async function renderContentTab(sponsor) {
           ${preview}
           <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${item.file_name}</p>
           ${item.creative_id ? `<p class="hint" style="margin:0 0 6px;">🔗 QR: ${item.creative_id}</p>` : ''}
-          <form method="POST" action="/api/sponsor/action?action=delete_content" onsubmit="return confirm('ลบไฟล์นี้?')" style="margin-top:8px;">
-            <input type="hidden" name="content_id" value="${item.id}" />
-            <button class="btn-small btn-danger" type="submit">ลบ</button>
-          </form>
+          <button class="btn-small btn-danger delete-content-btn" data-content-id="${item.id}" style="margin-top:8px;">ลบ</button>
         </div>`;
     })
   );
@@ -151,6 +148,29 @@ async function renderContentTab(sponsor) {
       }
 
       const sb = supabase.createClient(${JSON.stringify(process.env.SUPABASE_URL)}, ${JSON.stringify(process.env.SUPABASE_ANON_KEY)});
+      document.querySelectorAll('.delete-content-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('ลบไฟล์นี้?')) return;
+          btn.disabled = true;
+          try {
+            const res = await fetch('/api/sponsor/action?action=delete_content', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ content_id: btn.dataset.contentId }).toString(),
+            });
+            if (res.ok) {
+              window.location.reload();
+            } else {
+              alert(await res.text());
+              btn.disabled = false;
+            }
+          } catch (err) {
+            alert('เกิดข้อผิดพลาด: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+
       const form = document.querySelector('.sponsor-upload-form');
       if (form) {
         form.addEventListener('submit', async (e) => {
@@ -289,22 +309,6 @@ async function renderContentTab(sponsor) {
             statusEl.textContent = 'เกิดข้อผิดพลาด: ' + err.message;
           }
         });
-      }
-
-      if (reservedUntil) {
-        const countdownEl = document.getElementById('countdown');
-        function tick() {
-          const diff = new Date(reservedUntil).getTime() - Date.now();
-          if (diff <= 0) {
-            countdownEl.textContent = 'หมดเวลาชำระเงินแล้ว กรุณาจองใหม่';
-            return;
-          }
-          const mins = Math.floor(diff / 60000);
-          const secs = Math.floor((diff % 60000) / 1000);
-          countdownEl.textContent = 'เหลือเวลาชำระเงิน ' + mins + ':' + String(secs).padStart(2, '0');
-          setTimeout(tick, 1000);
-        }
-        tick();
       }
     </script>`;
 }
