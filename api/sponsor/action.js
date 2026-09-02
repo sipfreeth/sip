@@ -360,7 +360,28 @@ export default async function handler(req, res) {
   }
 
   if (actionParam === 'delete_content') {
-    await supabase.from('sponsor_content').delete().eq('id', params.get('content_id')).eq('sponsor_id', sponsor.id);
+    const contentId = params.get('content_id');
+
+    // เช็คก่อนว่าไฟล์นี้ถูกผูกกับการจอง Slot อยู่หรือไม่ (ที่ยังไม่ถูกยกเลิก/refund) — ถ้ามีลบไม่ได้ตามกฎ Foreign Key ของฐานข้อมูล
+    const { data: usedIn } = await supabase
+      .from('slot_bookings')
+      .select('slot_number, week_start, office_accounts(office_name)')
+      .eq('sponsor_content_id', contentId)
+      .neq('payment_status', 'refunded');
+
+    if (usedIn && usedIn.length > 0) {
+      const usageList = usedIn
+        .map((b) => `${b.office_accounts?.office_name || '-'} Slot ${b.slot_number} (สัปดาห์ ${new Date(b.week_start).toLocaleDateString('th-TH')})`)
+        .join(', ');
+      res.status(400).send(`ลบไฟล์นี้ไม่ได้ เพราะกำลังถูกใช้งานอยู่ในการจอง: ${usageList} — กรุณายกเลิกการจองที่ใช้ไฟล์นี้ก่อน ถึงจะลบไฟล์ได้`);
+      return;
+    }
+
+    const { error } = await supabase.from('sponsor_content').delete().eq('id', contentId).eq('sponsor_id', sponsor.id);
+    if (error) {
+      res.status(400).send(`ลบไฟล์ไม่สำเร็จ: ${error.message}`);
+      return;
+    }
     res.writeHead(302, { Location: '/api/sponsor?page=content' });
     res.end();
     return;
