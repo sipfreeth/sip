@@ -172,29 +172,50 @@ async function renderContentTab(sponsor) {
           let dims = null;
 
           if (isVideo) {
+            console.log('[Ratio Check] เริ่มตรวจสอบวิดีโอ:', file.name);
             const videoMeta = await new Promise((resolve) => {
               const objectUrl = URL.createObjectURL(file);
               const videoEl = document.createElement('video');
-              videoEl.preload = 'metadata';
+              videoEl.preload = 'auto'; // เปลี่ยนจาก 'metadata' — บางเบราว์เซอร์อ่านขนาดไม่แม่นยำถ้าใช้แค่ metadata
               videoEl.muted = true;
+              videoEl.playsInline = true;
               videoEl.style.position = 'fixed';
               videoEl.style.top = '-9999px';
               videoEl.style.left = '-9999px';
-              document.body.appendChild(videoEl); // ต้องแนบไว้ในหน้าเว็บจริง — บางเบราว์เซอร์ (มือถือ) อ่านค่าไม่แม่นยำถ้าสร้างลอยๆ ไม่ต่อ DOM
+              videoEl.style.width = '1px';
+              videoEl.style.height = '1px';
+              document.body.appendChild(videoEl);
+
+              let resolved = false;
               const cleanup = () => {
                 URL.revokeObjectURL(objectUrl);
                 videoEl.remove();
               };
-              videoEl.onloadedmetadata = () => {
-                const result = { duration: videoEl.duration, width: videoEl.videoWidth, height: videoEl.videoHeight };
+              const finish = (result, reason) => {
+                if (resolved) return;
+                resolved = true;
+                console.log('[Ratio Check] วิดีโออ่านค่าจบด้วยเหตุผล:', reason, '-> ผลลัพธ์:', result);
                 cleanup();
                 resolve(result);
               };
-              videoEl.onerror = () => {
-                cleanup();
-                resolve(null);
+
+              const tryFinish = (reason) => {
+                console.log('[Ratio Check]', reason, '— videoWidth:', videoEl.videoWidth, 'videoHeight:', videoEl.videoHeight, 'duration:', videoEl.duration);
+                if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+                  finish({ duration: videoEl.duration, width: videoEl.videoWidth, height: videoEl.videoHeight }, reason);
+                }
               };
+              videoEl.onloadedmetadata = () => tryFinish('loadedmetadata');
+              videoEl.onloadeddata = () => tryFinish('loadeddata');
+              videoEl.oncanplay = () => tryFinish('canplay');
+              videoEl.onerror = () => {
+                console.error('[Ratio Check] วิดีโอโหลด Error:', videoEl.error);
+                finish(null, 'error');
+              };
+              setTimeout(() => finish(null, 'timeout 8s'), 8000);
+
               videoEl.src = objectUrl;
+              videoEl.load();
             });
 
             if (!videoMeta) {
