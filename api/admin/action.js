@@ -39,6 +39,25 @@ async function readBody(req) {
   return new URLSearchParams(body);
 }
 
+// รับรูปแบบ Base64 (Data URL) จากฝั่ง Client — เหมาะกับรูปของรางวัลที่ไฟล์เล็ก ไม่ต้องใช้ Signed URL แบบ Sponsor/Office Content
+// คืนค่า path ของไฟล์ใน Storage (ใช้ประกอบ URL สาธารณะได้เลยเพราะ bucket เป็น public)
+async function uploadRewardImage(dataUrl, originalFileName) {
+  const match = dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+  if (!match) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+  const [, mimeType, base64Data] = match;
+  const buffer = Buffer.from(base64Data, 'base64');
+
+  if (buffer.length > 3 * 1024 * 1024) throw new Error('ไฟล์รูปใหญ่เกิน 3MB');
+
+  const ext = originalFileName.split('.').pop() || 'jpg';
+  const path = `reward-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+  const { error } = await supabase.storage.from('reward-images').upload(path, buffer, { contentType: mimeType, upsert: false });
+  if (error) throw error;
+
+  return path;
+}
+
 export default async function handler(req, res) {
   const actionParam = req.query.action;
 
@@ -223,10 +242,27 @@ export default async function handler(req, res) {
   // ---------- 4. REWARD ACTIONS ----------
   if (actionParam === 'reward_create') {
     if (!requirePermission(res, admin.role, 'create_reward')) return;
-    await supabase.from('rewards').insert({
+
+    let imagePath = null;
+    const imageBase64 = params.get('image_base64');
+    if (imageBase64) {
+      try {
+        imagePath = await uploadRewardImage(imageBase64, params.get('image_filename') || 'reward.jpg');
+      } catch (err) {
+        res.status(400).send(`อัปโหลดรูปไม่สำเร็จ: ${err.message}`);
+        return;
+      }
+    }
+
+    const { error } = await supabase.from('rewards').insert({
       name: params.get('name'),
       points_cost: Number(params.get('points_cost')),
+      image_path: imagePath,
     });
+    if (error) {
+      res.status(400).send(`เพิ่มของรางวัลไม่สำเร็จ: ${error.message}`);
+      return;
+    }
     res.writeHead(302, { Location: '/api/admin/rewards' });
     res.end();
     return;
@@ -234,10 +270,24 @@ export default async function handler(req, res) {
 
   if (actionParam === 'reward_update') {
     if (!requirePermission(res, admin.role, 'edit_reward')) return;
-    await supabase
-      .from('rewards')
-      .update({ name: params.get('name'), points_cost: Number(params.get('points_cost')) })
-      .eq('id', params.get('id'));
+
+    const updates = { name: params.get('name'), points_cost: Number(params.get('points_cost')) };
+
+    const imageBase64 = params.get('image_base64');
+    if (imageBase64) {
+      try {
+        updates.image_path = await uploadRewardImage(imageBase64, params.get('image_filename') || 'reward.jpg');
+      } catch (err) {
+        res.status(400).send(`อัปโหลดรูปไม่สำเร็จ: ${err.message}`);
+        return;
+      }
+    }
+
+    const { error } = await supabase.from('rewards').update(updates).eq('id', params.get('id'));
+    if (error) {
+      res.status(400).send(`บันทึกไม่สำเร็จ: ${error.message}`);
+      return;
+    }
     res.writeHead(302, { Location: '/api/admin/rewards' });
     res.end();
     return;
