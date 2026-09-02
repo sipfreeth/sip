@@ -148,7 +148,7 @@ export default async function handler(req, res) {
     const [tierScore, spendableBalance, rewardsRes] = await Promise.all([
       getTierScoreForEvaluation(member.id, member.created_at),
       getSpendableBalance(member.id),
-      supabase.from('rewards').select('id, name, points_cost').eq('active', true).order('points_cost', { ascending: true }),
+      supabase.from('rewards').select('id, name, points_cost, image_path').eq('active', true).order('points_cost', { ascending: true }),
     ]);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -395,9 +395,11 @@ function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
   const items = rewards
     .map((r) => {
       const canAfford = spendableBalance >= r.points_cost;
+      const imageUrl = r.image_path ? `${process.env.SUPABASE_URL}/storage/v1/object/public/reward-images/${r.image_path}` : null;
       return `
         <div class="reward ${canAfford ? '' : 'disabled'}">
-          <div>
+          ${imageUrl ? `<img src="${imageUrl}" class="reward-image" />` : ''}
+          <div style="flex:1;">
             <div class="reward-name">${r.name}</div>
             <div class="reward-cost">${r.points_cost} Point</div>
           </div>
@@ -423,7 +425,8 @@ function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
   .card { background: white; border-radius: 16px; padding: 24px; max-width: 480px; margin: 0 auto; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   .tier-badge { display: inline-block; color: white; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; margin-top: 8px; letter-spacing: 0.5px; }
   .balance { font-size: 28px; font-weight: 700; color: #06c755; margin: 12px 0 20px; }
-  .reward { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }
+  .reward { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid #f0f0f0; gap: 12px; }
+  .reward-image { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
   .reward.disabled { opacity: 0.5; }
   .reward-name { font-weight: 600; }
   .reward-cost { font-size: 13px; color: #6b7280; }
