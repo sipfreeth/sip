@@ -173,13 +173,28 @@ async function renderContentTab(sponsor) {
 
           if (isVideo) {
             const videoMeta = await new Promise((resolve) => {
+              const objectUrl = URL.createObjectURL(file);
               const videoEl = document.createElement('video');
               videoEl.preload = 'metadata';
-              videoEl.onloadedmetadata = () => {
-                resolve({ duration: videoEl.duration, width: videoEl.videoWidth, height: videoEl.videoHeight });
+              videoEl.muted = true;
+              videoEl.style.position = 'fixed';
+              videoEl.style.top = '-9999px';
+              videoEl.style.left = '-9999px';
+              document.body.appendChild(videoEl); // ต้องแนบไว้ในหน้าเว็บจริง — บางเบราว์เซอร์ (มือถือ) อ่านค่าไม่แม่นยำถ้าสร้างลอยๆ ไม่ต่อ DOM
+              const cleanup = () => {
+                URL.revokeObjectURL(objectUrl);
+                videoEl.remove();
               };
-              videoEl.onerror = () => resolve(null);
-              videoEl.src = URL.createObjectURL(file);
+              videoEl.onloadedmetadata = () => {
+                const result = { duration: videoEl.duration, width: videoEl.videoWidth, height: videoEl.videoHeight };
+                cleanup();
+                resolve(result);
+              };
+              videoEl.onerror = () => {
+                cleanup();
+                resolve(null);
+              };
+              videoEl.src = objectUrl;
             });
 
             if (!videoMeta) {
