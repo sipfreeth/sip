@@ -101,7 +101,7 @@ async function renderContentTab(sponsor) {
     <div id="ratioPreviewModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center; padding:20px;">
       <div style="background:white; border-radius:12px; padding:20px; max-width:480px; width:100%;">
         <h3 style="margin:0 0 4px; font-size:15px;">ตัวอย่างการแสดงผลบนจอจริง</h3>
-        <p class="hint" style="margin:0 0 12px;">ไฟล์นี้แคบกว่า 16:9 จะมีแถบพื้นหลังด้านข้างตามภาพตัวอย่างนี้</p>
+        <p class="hint" style="margin:0 0 12px;">ตรวจสอบให้แน่ใจว่าไฟล์นี้แสดงผลถูกต้องตามภาพตัวอย่างนี้ ก่อนอัปโหลดจริง</p>
         <div id="ratioPreviewCanvas" style="position:relative; width:100%; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center;"></div>
         <div style="display:flex; gap:8px; margin-top:16px;">
           <button type="button" id="ratioPreviewCancel" class="btn-small" style="flex:1; background:#9ca3af; color:white;">ยกเลิก</button>
@@ -268,15 +268,14 @@ async function renderContentTab(sponsor) {
               statusEl.textContent = 'ไฟล์นี้อัตราส่วน ' + dims.width + 'x' + dims.height + ' กว้างเกินไป (ต้องไม่กว้างกว่า 16:9 เช่น 1920x1080 — แคบกว่าได้)';
               return;
             }
-            // แคบกว่า 16:9 ชัดเจน (ไม่ใช่แค่คลาดเคลื่อนเล็กน้อย) — โชว์ตัวอย่างการแสดงผลจริงบนจอก่อน ให้ยืนยันก่อนอัปโหลด
-            if (ratio < targetRatio * 0.98) {
-              statusEl.textContent = '';
-              const confirmed = await showRatioPreview(file, isVideo);
-              if (!confirmed) {
-                statusEl.textContent = 'ยกเลิกการอัปโหลด';
-                return;
-              }
-            }
+          }
+
+          // ยืนยันตัวอย่างก่อนอัปโหลดจริงเสมอ ไม่ว่าอัตราส่วนจะใกล้เคียง 16:9 แค่ไหนก็ตาม
+          statusEl.textContent = '';
+          const confirmed = await showRatioPreview(file, isVideo);
+          if (!confirmed) {
+            statusEl.textContent = 'ยกเลิกการอัปโหลด';
+            return;
           }
 
           statusEl.textContent = 'กำลังขอสิทธิ์อัปโหลด...';
