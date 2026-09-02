@@ -167,38 +167,33 @@ async function renderContentTab(sponsor) {
             return;
           }
 
+          // ---------- อ่านข้อมูลไฟล์ — วิดีโอโหลดครั้งเดียวอ่านทั้งความยาวและขนาดพร้อมกัน (กันปัญหาโหลดซ้ำ 2 รอบไม่เสถียร) ----------
+          statusEl.textContent = 'กำลังตรวจสอบไฟล์...';
+          let dims = null;
+
           if (isVideo) {
-            statusEl.textContent = 'กำลังตรวจสอบความยาววิดีโอ...';
-            const durationOk = await new Promise((resolve) => {
+            const videoMeta = await new Promise((resolve) => {
               const videoEl = document.createElement('video');
               videoEl.preload = 'metadata';
               videoEl.onloadedmetadata = () => {
-                URL.revokeObjectURL(videoEl.src);
-                resolve(videoEl.duration <= ${MAX_VIDEO_SECONDS} + 0.5); // ผ่อนให้ 0.5 วิ กันปัดเศษ
+                resolve({ duration: videoEl.duration, width: videoEl.videoWidth, height: videoEl.videoHeight });
               };
-              videoEl.onerror = () => resolve(false);
+              videoEl.onerror = () => resolve(null);
               videoEl.src = URL.createObjectURL(file);
             });
-            if (!durationOk) {
+
+            if (!videoMeta) {
+              statusEl.textContent = 'อ่านข้อมูลวิดีโอไม่ได้ กรุณาลองไฟล์อื่น';
+              return;
+            }
+            if (videoMeta.duration > ${MAX_VIDEO_SECONDS} + 0.5) {
               statusEl.textContent = 'วิดีโอต้องยาวไม่เกิน ${MAX_VIDEO_SECONDS} วินาที';
               return;
             }
-          }
-
-          // ---------- เช็คอัตราส่วนภาพ 16:9 ก่อนอัปโหลดจริง (เร็วกว่า ไม่เสียเวลาถ้าไฟล์ผิดสัดส่วน) ----------
-          statusEl.textContent = 'กำลังตรวจสอบอัตราส่วนไฟล์...';
-          const dims = await new Promise((resolve) => {
-            const objectUrl = URL.createObjectURL(file);
-            if (isVideo) {
-              const videoEl = document.createElement('video');
-              videoEl.preload = 'metadata';
-              videoEl.onloadedmetadata = () => {
-                URL.revokeObjectURL(objectUrl);
-                resolve({ width: videoEl.videoWidth, height: videoEl.videoHeight });
-              };
-              videoEl.onerror = () => resolve(null);
-              videoEl.src = objectUrl;
-            } else {
+            dims = { width: videoMeta.width, height: videoMeta.height };
+          } else {
+            dims = await new Promise((resolve) => {
+              const objectUrl = URL.createObjectURL(file);
               const img = new Image();
               img.onload = () => {
                 URL.revokeObjectURL(objectUrl);
@@ -206,8 +201,8 @@ async function renderContentTab(sponsor) {
               };
               img.onerror = () => resolve(null);
               img.src = objectUrl;
-            }
-          });
+            });
+          }
 
           if (dims) {
             const ratio = dims.width / dims.height;
