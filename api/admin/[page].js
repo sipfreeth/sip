@@ -529,17 +529,26 @@ async function renderMemberDetail(admin, memberId) {
 
 // ---------- Rewards tab ----------
 async function renderRewardsTab(admin) {
-  const { data: rewards } = await supabase.from('rewards').select('id, name, points_cost, active').order('id');
+  const { data: rewards } = await supabase.from('rewards').select('id, name, points_cost, active, image_path').order('id');
   const canEdit = can(admin.role, 'edit_reward');
   const canDelete = can(admin.role, 'delete_reward');
 
   const rows = (rewards || [])
     .map((r) => {
+      const imageUrl = r.image_path ? `${process.env.SUPABASE_URL}/storage/v1/object/public/reward-images/${r.image_path}` : null;
+      const imageCell = `
+        <td style="text-align:center;">
+          ${imageUrl ? `<img src="${imageUrl}" style="width:40px; height:40px; object-fit:cover; border-radius:6px;" />` : '<span class="muted">-</span>'}
+          ${canEdit ? `<input type="file" accept="image/jpeg,image/png,image/webp" class="reward-image-input" data-reward-id="${r.id}" style="display:block; margin-top:4px; font-size:11px; max-width:90px;" />` : ''}
+        </td>`;
+
       const editableCells = canEdit
         ? `
           <td>
-            <form method="POST" action="/api/admin/action?action=reward_update" class="inline-form">
+            <form method="POST" action="/api/admin/action?action=reward_update" class="inline-form reward-edit-form" data-reward-id="${r.id}">
               <input type="hidden" name="id" value="${r.id}" />
+              <input type="hidden" name="image_base64" class="reward-image-base64" />
+              <input type="hidden" name="image_filename" class="reward-image-filename" />
               <input type="text" name="name" value="${r.name}" class="table-input" />
           </td>
           <td><input type="number" name="points_cost" value="${r.points_cost}" class="table-input small" /></td>
@@ -557,6 +566,7 @@ async function renderRewardsTab(admin) {
 
       return `
         <tr>
+          ${imageCell}
           ${editableCells}
           <td style="text-align:center;">
             <form method="POST" action="/api/admin/action?action=reward_toggle" class="inline-form">
@@ -572,11 +582,15 @@ async function renderRewardsTab(admin) {
   return `
     <div class="section">
       <h2>เพิ่มของรางวัลใหม่</h2>
-      <form method="POST" action="/api/admin/action?action=reward_create" class="stack-form">
+      <form method="POST" action="/api/admin/action?action=reward_create" class="stack-form" id="rewardCreateForm">
         <label>ชื่อของรางวัล</label>
         <input type="text" name="name" required />
         <label>ใช้กี่ Point</label>
         <input type="number" name="points_cost" required min="1" />
+        <label>รูปภาพ (ไม่บังคับ — JPEG/PNG/WEBP ไม่เกิน 3MB)</label>
+        <input type="file" accept="image/jpeg,image/png,image/webp" id="rewardCreateImage" />
+        <input type="hidden" name="image_base64" id="rewardCreateImageBase64" />
+        <input type="hidden" name="image_filename" id="rewardCreateImageFilename" />
         <button type="submit" class="btn-primary">เพิ่มของรางวัล</button>
       </form>
     </div>
@@ -584,10 +598,45 @@ async function renderRewardsTab(admin) {
       <h2>รายการของรางวัลทั้งหมด</h2>
       ${!canEdit ? '<p class="hint">คุณดูและเปิด/ปิดใช้งานได้ แต่แก้ไข/ลบไม่ได้</p>' : ''}
       <table>
-        <tr><th>ชื่อ</th><th>Point</th><th></th><th style="text-align:center;">สถานะ</th><th></th></tr>
-        ${rows || '<tr><td colspan="5" class="muted">ยังไม่มีของรางวัล</td></tr>'}
+        <tr><th>รูป</th><th>ชื่อ</th><th>Point</th><th></th><th style="text-align:center;">สถานะ</th><th></th></tr>
+        ${rows || '<tr><td colspan="6" class="muted">ยังไม่มีของรางวัล</td></tr>'}
       </table>
-    </div>`;
+    </div>
+    <script>
+      function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
+      // ฟอร์มเพิ่มของรางวัลใหม่ — แปลงไฟล์เป็น Base64 ใส่ในช่องซ่อนก่อน submit จริง
+      const createForm = document.getElementById('rewardCreateForm');
+      const createImageInput = document.getElementById('rewardCreateImage');
+      createForm.addEventListener('submit', async (e) => {
+        if (createImageInput.files[0]) {
+          e.preventDefault();
+          const base64 = await fileToBase64(createImageInput.files[0]);
+          document.getElementById('rewardCreateImageBase64').value = base64;
+          document.getElementById('rewardCreateImageFilename').value = createImageInput.files[0].name;
+          createForm.submit();
+        }
+      });
+
+      // ช่องเปลี่ยนรูปต่อแถว — พอเลือกไฟล์ ใส่ Base64 ลงในฟอร์มแก้ไขแถวเดียวกันไว้เลย (ยังไม่ submit จนกว่าจะกด "บันทึก")
+      document.querySelectorAll('.reward-image-input').forEach((input) => {
+        input.addEventListener('change', async () => {
+          if (!input.files[0]) return;
+          const rewardId = input.dataset.rewardId;
+          const form = document.querySelector('.reward-edit-form[data-reward-id="' + rewardId + '"]');
+          const base64 = await fileToBase64(input.files[0]);
+          form.querySelector('.reward-image-base64').value = base64;
+          form.querySelector('.reward-image-filename').value = input.files[0].name;
+        });
+      });
+    </script>`;
 }
 
 // ---------- Campaigns tab ----------
