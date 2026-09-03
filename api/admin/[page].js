@@ -285,7 +285,7 @@ async function renderDashboardTab(filterCampaigns) {
       <h2>ประวัติการแลกของรางวัล / สถานะจัดส่ง (50 รายการล่าสุด)</h2>
       <a href="/api/admin/action?action=export_redemptions" class="btn-small" style="display:inline-block; margin-bottom:8px;">📥 Export การแลกรางวัลทั้งหมด (CSV)</a>
       <table>
-        <tr><th>วันที่</th><th>สมาชิก</th><th>ของรางวัล</th><th style="text-align:right;">Point</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะ</th></tr>
+        <tr><th>วันที่</th><th>สมาชิก</th><th>ของรางวัล</th><th style="text-align:right;">Sip</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะ</th></tr>
         ${redemptionRows || '<tr><td colspan="6" class="muted">ยังไม่มีการแลก</td></tr>'}
       </table>
     </div>
@@ -382,7 +382,7 @@ async function renderMembersTab(admin, tierFilter, detailMemberId) {
       <h2>รายชื่อสมาชิก${tierFilter ? ` — Tier ${tierFilter}` : ''}</h2>
       <p class="hint">${filtered.length.toLocaleString()} คน — คลิกชื่อเพื่อดูรายละเอียด</p>
       <table>
-        <tr><th>ชื่อ</th><th>Tier</th><th style="text-align:right;">Tier Score</th><th style="text-align:right;">Point คงเหลือ</th><th>สมัครเมื่อ</th></tr>
+        <tr><th>ชื่อ</th><th>Tier</th><th style="text-align:right;">Tier Score</th><th style="text-align:right;">Sip คงเหลือ</th><th>สมัครเมื่อ</th></tr>
         ${rows || '<tr><td colspan="5" class="muted">ไม่มีสมาชิกในกลุ่มนี้</td></tr>'}
       </table>
     </div>`;
@@ -461,12 +461,12 @@ async function renderMemberDetail(admin, memberId) {
   const adjustForm = canEditMember
     ? `
     <div class="section">
-      <h2>ปรับ Tier Score / Point ด้วยมือ</h2>
+      <h2>ปรับ Tier Score / Sip ด้วยมือ</h2>
       <form method="POST" action="/api/admin/action?action=member_adjust" class="stack-form">
         <input type="hidden" name="member_id" value="${member.id}" />
         <label>เพิ่ม/ลด Tier Score (ใส่ค่าติดลบเพื่อหัก)</label>
         <input type="number" name="tier_score_delta" value="0" />
-        <label>เพิ่ม/ลด Point (ใส่ค่าติดลบเพื่อหัก)</label>
+        <label>เพิ่ม/ลด Sip (ใส่ค่าติดลบเพื่อหัก)</label>
         <input type="number" name="points_delta" value="0" />
         <label>หมายเหตุ (ไม่บังคับ)</label>
         <input type="text" name="note" placeholder="เช่น ชดเชยระบบ error" />
@@ -502,7 +502,7 @@ async function renderMemberDetail(admin, memberId) {
     <div class="section">
       <h2>ประวัติ Engagement (Campaign ที่เคย engage)</h2>
       <table>
-        <tr><th>วันที่</th><th>Campaign</th><th style="text-align:right;">Tier Score</th><th style="text-align:right;">Point</th></tr>
+        <tr><th>วันที่</th><th>Campaign</th><th style="text-align:right;">Tier Score</th><th style="text-align:right;">Sip</th></tr>
         ${engagementRows || '<tr><td colspan="4" class="muted">ยังไม่มีประวัติ</td></tr>'}
       </table>
     </div>
@@ -510,7 +510,7 @@ async function renderMemberDetail(admin, memberId) {
     <div class="section">
       <h2>ประวัติการแลก Reward</h2>
       <table>
-        <tr><th>วันที่</th><th>ของรางวัล</th><th style="text-align:right;">Point</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะจัดส่ง</th></tr>
+        <tr><th>วันที่</th><th>ของรางวัล</th><th style="text-align:right;">Sip</th><th>ที่อยู่จัดส่ง</th><th style="text-align:center;">สถานะจัดส่ง</th></tr>
         ${redemptionRows || '<tr><td colspan="5" class="muted">ยังไม่เคยแลก</td></tr>'}
       </table>
     </div>
@@ -585,7 +585,7 @@ async function renderRewardsTab(admin) {
       <form method="POST" action="/api/admin/action?action=reward_create" class="stack-form" id="rewardCreateForm">
         <label>ชื่อของรางวัล</label>
         <input type="text" name="name" required />
-        <label>ใช้กี่ Point</label>
+        <label>ใช้กี่ Sip</label>
         <input type="number" name="points_cost" required min="1" />
         <label>รูปภาพ (ไม่บังคับ — JPEG/PNG/WEBP ไม่เกิน 3MB)</label>
         <input type="file" accept="image/jpeg,image/png,image/webp" id="rewardCreateImage" />
@@ -598,7 +598,7 @@ async function renderRewardsTab(admin) {
       <h2>รายการของรางวัลทั้งหมด</h2>
       ${!canEdit ? '<p class="hint">คุณดูและเปิด/ปิดใช้งานได้ แต่แก้ไข/ลบไม่ได้</p>' : ''}
       <table>
-        <tr><th>รูป</th><th>ชื่อ</th><th>Point</th><th></th><th style="text-align:center;">สถานะ</th><th></th></tr>
+        <tr><th>รูป</th><th>ชื่อ</th><th>Sip</th><th></th><th style="text-align:center;">สถานะ</th><th></th></tr>
         ${rows || '<tr><td colspan="6" class="muted">ยังไม่มีของรางวัล</td></tr>'}
       </table>
     </div>
@@ -1450,7 +1450,7 @@ async function renderPetShopAdminTab(admin, query) {
         <input type="text" name="name" required />
         <label>คำอธิบาย (ไม่บังคับ)</label>
         <input type="text" name="description" />
-        <label>ราคา (Point)</label>
+        <label>ราคา (Sip)</label>
         <input type="number" name="points_cost" min="0" required />
         <div id="foodFields">
           <label>เพิ่มความอิ่ม (% — เฉพาะอาหาร/ขนม)</label>
