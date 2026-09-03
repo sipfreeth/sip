@@ -362,7 +362,7 @@ function renderSuccessPage(reward, newBalance) {
     <p style="font-size:20px;">🎉</p>
     <p>แลก <strong>${reward.name}</strong> สำเร็จ</p>
     <p class="hint">ทีมงานจะจัดส่งของรางวัลไปตามที่อยู่ที่แจ้งไว้เร็วๆ นี้</p>
-    <p class="hint">Point คงเหลือ: ${newBalance.toLocaleString()}</p>
+    <p class="hint">Sip คงเหลือ: ${newBalance.toLocaleString()}</p>
   </div>
 </body>
 </html>`;
@@ -375,7 +375,7 @@ function renderPetShopPage({ foodItems, treatItems, supplementItems, medicineIte
     <div class="shop-item">
       <div>
         <div class="item-name">${item.name}</div>
-        <div class="item-cost">${item.points_cost.toLocaleString()} Point</div>
+        <div class="item-cost">${item.points_cost.toLocaleString()} Sip</div>
         ${item.description ? `<div class="item-desc">${item.description}</div>` : ''}
       </div>
       ${
