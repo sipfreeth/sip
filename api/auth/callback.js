@@ -312,7 +312,7 @@ function renderPromoCodePage({ campaignName, promoCode, promoInstructions, spend
     <div class="code-box" id="promoCode">${promoCode || '-'}</div>
     <button class="copy-btn" onclick="copyCode()">📋 คัดลอกโค้ด</button>
     ${promoInstructions ? `<div class="instructions">${promoInstructions}</div>` : ''}
-    <p class="points-note">Point สะสมของคุณตอนนี้: ${spendableBalance.toLocaleString()}</p>
+    <p class="points-note">Sip สะสมของคุณตอนนี้: ${spendableBalance.toLocaleString()}</p>
   </div>
   <script>
     function copyCode() {
@@ -366,7 +366,7 @@ function renderPointsPage(member, history, tierScore, spendableBalance) {
     <span class="tier-badge" style="background:${current.color};">${current.name}</span>
     <div class="balance-row">
       <div class="balance-box">
-        <p class="label">Point คงเหลือ (ใช้แลกได้)</p>
+        <p class="label">Sip คงเหลือ (ใช้แลกได้)</p>
         <p class="value" style="color:#06c755;">${spendableBalance.toLocaleString()}</p>
       </div>
       <div class="balance-box">
@@ -379,10 +379,10 @@ function renderPointsPage(member, history, tierScore, spendableBalance) {
         ? `<p style="color:#6b7280; font-size:13px;">อีก ${pointsToNext.toLocaleString()} Tier Score จะขึ้นระดับ ${next.name}</p>`
         : `<p style="color:#6b7280; font-size:13px;">คุณอยู่ระดับสูงสุดแล้ว</p>`
     }
-    <p style="color:#9ca3af; font-size:12px;">Point จะหมดอายุทุกสิ้นปีถ้าไม่ใช้ ส่วน Tier ประเมินใหม่ทุกปีจากยอดปีที่แล้ว</p>
+    <p style="color:#9ca3af; font-size:12px;">Sip จะหมดอายุทุกสิ้นปีถ้าไม่ใช้ ส่วน Tier ประเมินใหม่ทุกปีจากยอดปีที่แล้ว</p>
     <h3 style="margin-top:20px;">ประวัติล่าสุด</h3>
     <table>
-      <tr><th>วันที่</th><th>ที่มา</th><th style="text-align:right;">Point</th></tr>
+      <tr><th>วันที่</th><th>ที่มา</th><th style="text-align:right;">Sip</th></tr>
       ${rows || '<tr><td colspan="3" style="color:#6b7280;">ยังไม่มีประวัติ</td></tr>'}
     </table>
   </div>
@@ -436,9 +436,9 @@ function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
 </head>
 <body>
   <div class="card">
-    <p style="color:#6b7280; margin:0;">Point ของฉัน</p>
+    <p style="color:#6b7280; margin:0;">Sip ของฉัน</p>
     <span class="tier-badge" style="background:${current.color};">${current.name}</span>
-    <p class="balance">${spendableBalance.toLocaleString()} Point</p>
+    <p class="balance">${spendableBalance.toLocaleString()} Sip</p>
     ${items || '<p style="color:#6b7280;">ยังไม่มีของรางวัลตอนนี้</p>'}
   </div>
 </body>
@@ -484,7 +484,7 @@ function renderShippingForm(reward, member, token, savedAddresses) {
 <body>
   <div class="card">
     <p class="reward-name">${reward.name}</p>
-    <p class="reward-cost">ใช้ ${reward.points_cost.toLocaleString()} Point</p>
+    <p class="reward-cost">ใช้ ${reward.points_cost.toLocaleString()} Sip</p>
     <p style="font-size:13px; color:#6b7280;">กรอกที่อยู่สำหรับจัดส่งของรางวัล — กดยืนยันแล้วแต้มจะถูกหักทันที</p>
     ${savedAddressPicker}
     <form method="POST" action="/api/member-action?do=confirm">
@@ -741,7 +741,7 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
     <button id="notifyBtn" class="notify-btn">🔔 เปิดการแจ้งเตือนเมื่อสัตว์เลี้ยงหิว</button>
 
     <div class="link-row">
-      <a href="/api/member-action?do=pet_shop">🛒 ร้านค้า (Point: ${spendableBalance.toLocaleString()})</a>
+      <a href="/api/member-action?do=pet_shop">🛒 ร้านค้า (Sip: ${spendableBalance.toLocaleString()})</a>
     </div>
   </div>
 
