@@ -398,10 +398,11 @@ async function renderBookTab(sponsor, query) {
     .map((slotNum) => {
       const booking = bookedMap[`${slotNum}_${activeWeekIso}`];
       if (booking) {
+        const isMine = booking.sponsor_id === sponsor.id;
         const categoryLabel = booking.businessType ? BUSINESS_TYPE_LABEL[booking.businessType] || 'อื่นๆ' : null;
-        return `<div class="slot-box slot-full">Slot ${slotNum}<br/><span class="hint">ไม่ว่าง</span>${
-          categoryLabel ? `<br/><span class="hint" style="color:#e76f51;">${categoryLabel}</span>` : ''
-        }</div>`;
+        return `<div class="slot-box ${isMine ? 'slot-mine' : 'slot-full'}">Slot ${slotNum}<br/><span class="hint">${
+          isMine ? '✅ Slot ของคุณเอง' : 'ไม่ว่าง'
+        }</span>${categoryLabel && !isMine ? `<br/><span class="hint" style="color:#e76f51;">${categoryLabel}</span>` : ''}</div>`;
       }
       availableCount++;
       return `
@@ -542,6 +543,7 @@ async function renderBookTab(sponsor, query) {
       .slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
       .slot-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 13px; }
       .slot-full { background: #f0f0f0; color: #9ca3af; text-align: center; cursor: not-allowed; }
+      .slot-mine { background: #eaf2fd; color: #2a78d6; text-align: center; border: 1px solid #2a78d6; }
       .slot-available:has(input:checked) { border-color: #06c755; background: #06c75511; }
     </style>`
     : `<div class="section"><p class="hint" style="color:#e76f51;">คุณยังไม่มีไฟล์ในคลัง ต้องอัปโหลดไฟล์ในแท็บ Content Library ก่อนถึงจะจองได้</p></div>`;
