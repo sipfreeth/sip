@@ -1020,6 +1020,15 @@ async function renderSponsorsTab(admin, query) {
           </div>`
         : '';
 
+      // เตือนเฉยๆ ถ้า Slot เลขติดกัน (เล่นต่อกันจริงบนจอ) เป็นธุรกิจประเภทเดียวกัน — ไม่บล็อกการอนุมัติ แค่แจ้งให้รู้
+      const myBusinessType = b.sponsors?.business_type;
+      const adjacentSameCategory = myBusinessType
+        ? neighborSlots.find((s) => Math.abs(s.slotNumber - b.slot_number) === 1 && s.businessType === myBusinessType)
+        : null;
+      const adjacentWarningHtml = adjacentSameCategory
+        ? `<p style="color:#dc2626; font-weight:600; font-size:13px; margin-top:6px;">⚠️ Slot ${adjacentSameCategory.slotNumber} ที่อยู่ติดกันเป็นธุรกิจประเภทเดียวกัน (${BUSINESS_TYPE_LABEL[myBusinessType] || 'อื่นๆ'})</p>`
+        : '';
+
       return `
         <div class="content-review-card">
           ${preview}
@@ -1028,6 +1037,7 @@ async function renderSponsorsTab(admin, query) {
           <p class="hint">ธุรกิจ: ${b.sponsors?.business_type ? BUSINESS_TYPE_LABEL[b.sponsors.business_type] || 'อื่นๆ' : 'ไม่ระบุ'}</p>
           <p class="hint">สัปดาห์ ${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
           ${neighborHtml}
+          ${adjacentWarningHtml}
           <div style="display:flex; gap:8px; margin-top:8px;">
             <form method="POST" action="/api/admin/action?action=booking_review" style="display:inline;">
               <input type="hidden" name="booking_id" value="${b.id}" />
