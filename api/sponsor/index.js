@@ -19,6 +19,7 @@ import {
   getSponsorCreditBalance,
   getAiringStatus,
   AIRING_STATUS_LABEL,
+  BUSINESS_TYPE_LABEL,
   MAX_FILES_PER_SPONSOR,
   MAX_IMAGE_MB,
   MAX_VIDEO_MB,
@@ -397,7 +398,10 @@ async function renderBookTab(sponsor, query) {
     .map((slotNum) => {
       const booking = bookedMap[`${slotNum}_${activeWeekIso}`];
       if (booking) {
-        return `<div class="slot-box slot-full">Slot ${slotNum}<br/><span class="hint">ไม่ว่าง</span></div>`;
+        const categoryLabel = booking.businessType ? BUSINESS_TYPE_LABEL[booking.businessType] || 'อื่นๆ' : null;
+        return `<div class="slot-box slot-full">Slot ${slotNum}<br/><span class="hint">ไม่ว่าง</span>${
+          categoryLabel ? `<br/><span class="hint" style="color:#e76f51;">${categoryLabel}</span>` : ''
+        }</div>`;
       }
       availableCount++;
       return `
@@ -564,15 +568,17 @@ async function renderBookingsTab(sponsor, query) {
 
   const rows = await Promise.all(
     bookings.map(async (b) => {
+      const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
       const statusLabel =
         b.payment_status === 'refunded' && b.approval_status === 'rejected'
           ? 'ไม่ผ่านตรวจสอบ (ยกเลิก)'
+          : isExpired
+          ? 'หมดเวลาชำระเงิน'
           : { unpaid: 'รอชำระเงิน', paid: 'ชำระแล้ว', refunded: 'ได้เครดิตคืนแล้ว' }[b.payment_status] || b.payment_status;
-      const statusColor = { unpaid: '#e76f51', paid: '#06c755', refunded: '#9ca3af' }[b.payment_status] || '#9ca3af';
+      const statusColor = isExpired ? '#e76f51' : { unpaid: '#e76f51', paid: '#06c755', refunded: '#9ca3af' }[b.payment_status] || '#9ca3af';
       const approvalLabel = { pending: 'รอตรวจสอบไฟล์', approved: 'ไฟล์ผ่านแล้ว', rejected: 'ไฟล์ไม่ผ่าน' }[b.approval_status] || b.approval_status;
       const approvalColor = { pending: '#d4a017', approved: '#06c755', rejected: '#e76f51' }[b.approval_status] || '#9ca3af';
       const weekDate = new Date(b.week_start);
-      const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
       const isLocked = true; // ล็อกเสมอตั้งแต่ยืนยันการจองแล้ว เปลี่ยนได้แค่แจ้งทีมงานผ่านแชท (ขึ้นอยู่กับดุลยพินิจทีมงาน)
 
       // เห็นจำนวนรอบเล่นจริงแค่รายการที่จ่ายเงินแล้ว (ยังไม่จ่าย = ยังไม่ถูกส่งไปเล่นบนจอ)
@@ -958,8 +964,13 @@ async function renderProfileTab(sponsor) {
         <input type="text" name="contact_name" value="${sponsor.contact_name || ''}" />
         <label>เบอร์โทร</label>
         <input type="text" name="contact_phone" value="${sponsor.contact_phone || ''}" />
-        <label>ประเภทธุรกิจ</label>
-        <input type="text" name="business_type" value="${sponsor.business_type || ''}" />
+        <label>ประเภทธุรกิจ *</label>
+        <select name="business_type" required>
+          <option value="">-- เลือกประเภทธุรกิจ --</option>
+          ${Object.entries(BUSINESS_TYPE_LABEL)
+            .map(([key, label]) => `<option value="${key}" ${sponsor.business_type === key ? 'selected' : ''}>${label}</option>`)
+            .join('')}
+        </select>
         <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึก</button>
       </form>
     </div>
