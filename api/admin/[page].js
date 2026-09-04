@@ -1015,8 +1015,11 @@ async function renderSponsorsTab(admin, query) {
         ? `<div class="hint" style="background:#f7f8fa; border-radius:6px; padding:6px 8px; margin-top:6px;">
             <strong>Slot อื่นในสัปดาห์เดียวกัน:</strong><br/>
             ${neighborSlots
-              .map((s) => `Slot ${s.slotNumber}: ${s.businessType ? BUSINESS_TYPE_LABEL[s.businessType] || 'อื่นๆ' : 'ไม่ระบุ'}`)
-              .join(' • ')}
+              .map(
+                (s) =>
+                  `Slot ${s.slotNumber}: ${s.businessType ? BUSINESS_TYPE_LABEL[s.businessType] || 'อื่นๆ' : 'ไม่ระบุ'} — ${s.companyName || '-'}`
+              )
+              .join('<br/>')}
           </div>`
         : '';
 
@@ -1026,7 +1029,7 @@ async function renderSponsorsTab(admin, query) {
         ? neighborSlots.find((s) => Math.abs(s.slotNumber - b.slot_number) === 1 && s.businessType === myBusinessType)
         : null;
       const adjacentWarningHtml = adjacentSameCategory
-        ? `<p style="color:#dc2626; font-weight:600; font-size:13px; margin-top:6px;">⚠️ Slot ${adjacentSameCategory.slotNumber} ที่อยู่ติดกันเป็นธุรกิจประเภทเดียวกัน (${BUSINESS_TYPE_LABEL[myBusinessType] || 'อื่นๆ'})</p>`
+        ? `<p style="color:#dc2626; font-weight:600; font-size:13px; margin-top:6px;">⚠️ Slot ${adjacentSameCategory.slotNumber} ที่อยู่ติดกันเป็นธุรกิจประเภทเดียวกัน (${BUSINESS_TYPE_LABEL[myBusinessType] || 'อื่นๆ'}) — สปอนเซอร์: ${adjacentSameCategory.companyName || '-'}</p>`
         : '';
 
       return `
