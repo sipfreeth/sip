@@ -32,6 +32,7 @@ import {
   cancelUnpaidBooking,
   createSlipUploadTarget,
   downloadSlipBytes,
+  BUSINESS_TYPE_LABEL,
 } from '../../lib/sponsorArea.js';
 import { createOmiseCharge, getOmiseCharge, verifySlipWithSlipOK, createOmiseCustomer, attachCardToCustomer, listCustomerCards, setDefaultCard, deleteCustomerCard, getPromptPayQrImageUrl, createOmiseBankCharge, SUPPORTED_BANKS } from '../../lib/payments.js';
 import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorArea.js';
@@ -64,6 +65,12 @@ export default async function handler(req, res) {
       if (params.get('agree_terms') !== 'on') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.status(200).send(renderSignupPage('กรุณายืนยันว่าอ่านและยอมรับข้อกำหนดก่อนสมัครสมาชิก', params));
+        return;
+      }
+
+      if (!BUSINESS_TYPE_LABEL[params.get('business_type')]) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderSignupPage('กรุณาเลือกประเภทธุรกิจ', params));
         return;
       }
 
@@ -940,8 +947,13 @@ function renderSignupPage(error, formValues) {
       <input type="text" name="contact_name" value="${v('contact_name')}" />
       <label>เบอร์โทรติดต่อ</label>
       <input type="text" name="contact_phone" value="${v('contact_phone')}" />
-      <label>ประเภทธุรกิจ</label>
-      <input type="text" name="business_type" value="${v('business_type')}" />
+      <label>ประเภทธุรกิจ *</label>
+      <select name="business_type" required>
+        <option value="">-- เลือกประเภทธุรกิจ --</option>
+        ${Object.entries(BUSINESS_TYPE_LABEL)
+          .map(([key, label]) => `<option value="${key}" ${v('business_type') === key ? 'selected' : ''}>${label}</option>`)
+          .join('')}
+      </select>
       <label>อีเมล (ใช้ login) *</label>
       <input type="email" name="email" value="${v('email')}" required />
       <label>รหัสผ่าน *</label>
