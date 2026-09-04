@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabaseClient.js';
 import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { requireAdmin, can } from '../../lib/adminAuth.js';
 import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
-import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent, getAiringStatus, AIRING_STATUS_LABEL } from '../../lib/sponsorArea.js';
+import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent, getAiringStatus, AIRING_STATUS_LABEL, getOfficeSlotCategories, BUSINESS_TYPE_LABEL } from '../../lib/sponsorArea.js';
 import { getAdminChatThreads } from '../../lib/chat.js';
 
 const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat', 'pet-shop'];
@@ -1008,12 +1008,26 @@ async function renderSponsorsTab(admin, query) {
         : c.file_type === 'video'
         ? `<video src="${url}" controls style="width:100%; max-height:160px; border-radius:8px;"></video>`
         : `<img src="${url}" style="width:100%; max-height:160px; object-fit:cover; border-radius:8px;" />`;
+
+      // Slot อื่นในออฟฟิศเดียวกัน สัปดาห์เดียวกัน — เอาไว้ดูว่ามีธุรกิจประเภทเดียวกันติดกันไหมก่อนอนุมัติ
+      const neighborSlots = await getOfficeSlotCategories(b.office_account_id, b.week_start, b.id);
+      const neighborHtml = neighborSlots.length
+        ? `<div class="hint" style="background:#f7f8fa; border-radius:6px; padding:6px 8px; margin-top:6px;">
+            <strong>Slot อื่นในสัปดาห์เดียวกัน:</strong><br/>
+            ${neighborSlots
+              .map((s) => `Slot ${s.slotNumber}: ${s.businessType ? BUSINESS_TYPE_LABEL[s.businessType] || 'อื่นๆ' : 'ไม่ระบุ'}`)
+              .join(' • ')}
+          </div>`
+        : '';
+
       return `
         <div class="content-review-card">
           ${preview}
           <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${c?.file_name || '-'}</p>
           <p class="hint">${b.sponsors?.company_name || '-'} (${b.sponsors?.sponsor_code || '-'}) — ${b.office_accounts?.office_name || '-'} Slot ${b.slot_number}</p>
+          <p class="hint">ธุรกิจ: ${b.sponsors?.business_type ? BUSINESS_TYPE_LABEL[b.sponsors.business_type] || 'อื่นๆ' : 'ไม่ระบุ'}</p>
           <p class="hint">สัปดาห์ ${new Date(b.week_start).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+          ${neighborHtml}
           <div style="display:flex; gap:8px; margin-top:8px;">
             <form method="POST" action="/api/admin/action?action=booking_review" style="display:inline;">
               <input type="hidden" name="booking_id" value="${b.id}" />
