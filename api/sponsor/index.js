@@ -953,6 +953,16 @@ async function renderProfileTab(sponsor) {
     .join('');
 
   return `
+    ${
+      !sponsor.email_verified_at
+        ? `<div class="section" style="background:#fff1ec; border:1px solid #e76f51;">
+            <p style="color:#e76f51; font-weight:600; margin:0 0 8px;">⚠️ ยังไม่ได้ยืนยันอีเมล (${sponsor.email})</p>
+            <form method="POST" action="/api/sponsor/action?action=resend_verification" style="display:inline;">
+              <button class="btn-small">ส่งอีเมลยืนยันอีกครั้ง</button>
+            </form>
+          </div>`
+        : ''
+    }
     <div class="section">
       <h2>ข้อมูลบริษัท</h2>
       <form method="POST" action="/api/sponsor/action?action=update_profile" class="stack-form">
