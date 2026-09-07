@@ -104,6 +104,7 @@ export default async function handler(req, res) {
   label { display: block; font-size: 13px; color: #6b7280; margin: 10px 0 4px; }
   input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; }
   .btn-primary { background: #1b1f27; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  .btn-small { background: #1b1f27; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -111,7 +112,14 @@ export default async function handler(req, res) {
     <div class="brand">Office Area</div>
     <a href="/api/office/action?action=logout" class="logout-link">Logout</a>
   </header>
-  <main>${content}${chatSection}${passwordSection}</main>
+  <main>${
+    !office.email_verified_at
+      ? `<div class="section" style="background:#fff1ec; border:1px solid #e76f51;">
+          <p style="color:#e76f51; font-weight:600; margin:0 0 8px;">⚠️ ยังไม่ได้ยืนยันอีเมล${office.email ? ` (${office.email})` : ' (ยังไม่มีอีเมลผูกไว้ ติดต่อ Admin)'}</p>
+          ${office.email ? `<form method="POST" action="/api/office/action?action=resend_verification" style="display:inline;"><button class="btn-small">ส่งอีเมลยืนยันอีกครั้ง</button></form>` : ''}
+        </div>`
+      : ''
+  }${content}${chatSection}${passwordSection}</main>
 </body>
 </html>`);
 }
