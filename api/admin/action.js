@@ -32,6 +32,7 @@ import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, g
 import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
 import { toCsv, sendCsv } from '../../lib/csv.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
+import { sendVerificationEmail } from '../../lib/emailVerification.js';
 
 async function readBody(req) {
   let body = '';
@@ -461,6 +462,21 @@ export default async function handler(req, res) {
       console.error('🔍OFFICE_DEBUG🔍 supabase result — data:', JSON.stringify(data), 'error:', JSON.stringify(error));
 
       dbError = error || (!data || !data.length ? { message: 'ไม่มีข้อผิดพลาดจากฐานข้อมูล แต่ไม่มีแถวถูกสร้างขึ้นจริง (อาจติด Row Level Security หรือ Policy บางอย่าง)' } : null);
+
+      // ส่งอีเมลยืนยันให้ Office ทันทีที่ Admin สร้างบัญชีเสร็จ (ถ้ามีอีเมล) — ไม่บล็อกการสร้างบัญชีถ้าส่งไม่สำเร็จ
+      if (!dbError && data?.[0]?.email) {
+        try {
+          await sendVerificationEmail({
+            accountType: 'office',
+            accountId: data[0].id,
+            email: data[0].email,
+            verifyActionUrl: '/api/office/action?action=verify_email',
+            displayName: data[0].office_name,
+          });
+        } catch (err) {
+          console.error('❌ ส่งอีเมลยืนยันให้ Office ไม่สำเร็จ (สร้างบัญชีสำเร็จอยู่ดี):', err.message);
+        }
+      }
     }
 
     if (actionParam === 'office_account_update') {
