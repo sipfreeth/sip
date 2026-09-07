@@ -17,6 +17,7 @@ import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
+import { sendVerificationEmail } from '../../lib/emailVerification.js';
 
 async function readBody(req) {
   let body = '';
@@ -135,6 +136,28 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ---------- ยืนยันอีเมล (คลิกจากลิงก์ในอีเมล) ----------
+  if (actionParam === 'verify_email') {
+    if (req.method !== 'GET') {
+      res.status(405).send('Method not allowed');
+      return;
+    }
+    const tokenData = await verifyResetToken(req.query.token);
+    if (!tokenData || tokenData.accountType !== 'office_verify') {
+      res.status(400).send('ลิงก์ยืนยันอีเมลนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบแล้วขอลิงก์ใหม่');
+      return;
+    }
+    await supabase.from('office_accounts').update({ email_verified_at: new Date().toISOString() }).eq('id', tokenData.accountId);
+    await markTokenUsed(tokenData.tokenHash);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(`<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"/><link rel="stylesheet" href="/theme.css"/></head>
+      <body style="font-family:sans-serif; text-align:center; padding:60px 20px;">
+        <h2>✅ ยืนยันอีเมลสำเร็จแล้ว!</h2>
+        <p><a href="/api/office">กลับเข้าสู่ระบบ</a></p>
+      </body></html>`);
+    return;
+  }
+
   // ---------- LOGOUT ----------
   if (actionParam === 'logout') {
     res.setHeader('Set-Cookie', clearOfficeSessionCookie());
@@ -146,6 +169,29 @@ export default async function handler(req, res) {
   // ---------- ต่อจากนี้ต้อง login (office account) ก่อน ----------
   const office = await requireOffice(req, res);
   if (!office) return;
+
+  // ---------- ส่งอีเมลยืนยันอีกครั้ง (เผื่ออีเมลแรกหาย/ไม่ได้รับ) ----------
+  if (actionParam === 'resend_verification') {
+    if (!office.email) {
+      res.status(400).send('บัญชีนี้ไม่มีอีเมลผูกไว้ กรุณาติดต่อ Admin เพื่อเพิ่มอีเมลก่อน');
+      return;
+    }
+    try {
+      await sendVerificationEmail({
+        accountType: 'office',
+        accountId: office.id,
+        email: office.email,
+        verifyActionUrl: '/api/office/action?action=verify_email',
+        displayName: office.office_name,
+      });
+    } catch (err) {
+      res.status(500).send(`ส่งอีเมลไม่สำเร็จ: ${err.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/office?sent=1' });
+    res.end();
+    return;
+  }
 
   // ---------- Poll แชท (GET เพื่อรีเฟรชข้อความถี่ๆ) ----------
   if (actionParam === 'chat_poll' && req.method === 'GET') {
