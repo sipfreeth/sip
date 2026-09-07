@@ -812,7 +812,7 @@ async function renderOfficeTab(admin, selectedOfficeId) {
   const officeAccount = await getOfficeAccount(activeId);
 
   const officeOptions = offices
-    .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} (${o.username})</option>`)
+    .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} (${o.username})${o.email_verified_at ? '' : ' ⚠️'}</option>`)
     .join('');
 
   const picker = `
@@ -823,6 +823,7 @@ async function renderOfficeTab(admin, selectedOfficeId) {
           ${officeOptions}
         </select>
       </form>
+      <p class="hint" style="margin-top:6px;">⚠️ ในรายการ = ยังไม่ยืนยันอีเมล</p>
     </div>`;
 
   if (!officeAccount) {
@@ -1069,6 +1070,7 @@ async function renderSponsorsTab(admin, query) {
           (s) => `
         <a href="/api/admin/sponsors?q=${encodeURIComponent(keyword)}&sponsor_id=${s.id}" class="link" style="display:block; padding:8px 0; border-bottom:1px solid #f0f0f0;">
           <strong>${s.sponsor_code}</strong> — ${s.company_name} <span class="hint">(${s.email})</span>
+          ${s.email_verified_at ? '<span class="hint" style="color:#06c755;">✓ ยืนยันอีเมลแล้ว</span>' : '<span class="hint" style="color:#e76f51;">⚠️ ยังไม่ยืนยันอีเมล</span>'}
         </a>`
         )
         .join('') || '<p class="muted">ไม่พบ Sponsor ที่ตรงกับคำค้นหา</p>';
@@ -1172,6 +1174,11 @@ async function renderSponsorsTab(admin, query) {
       detailSection = `
         <div class="section">
           <h2>${sponsor.company_name} <span class="hint">(Code: ${sponsor.sponsor_code})</span></h2>
+          <p style="font-size:13px; margin:0 0 8px;">${
+            sponsor.email_verified_at
+              ? `<span style="color:#06c755;">✓ ยืนยันอีเมลแล้ว</span> (${new Date(sponsor.email_verified_at).toLocaleDateString('th-TH')})`
+              : `<span style="color:#e76f51;">⚠️ ยังไม่ได้ยืนยันอีเมล</span>`
+          }</p>
           <p style="font-size:14px; margin:4px 0 12px;">เครดิตคงเหลือ: <strong style="color:#06c755;">${creditBalance.toLocaleString()} บาท</strong></p>
           <a href="/api/admin/chat?thread_type=sponsor&thread_id=${sponsor.id}" class="btn-small" style="display:inline-block; margin-bottom:12px;">แชทกับ Sponsor นี้</a>
           ${editForm}
