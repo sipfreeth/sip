@@ -16,6 +16,13 @@ import { createPet, playWithPet, buyItem, useInventoryItem, toggleEquip, getMemb
 import { getMemberFromSession } from '../lib/memberAuth.js';
 import { sendPushNotification } from '../lib/webpush.js';
 import { sendAlertEmail } from '../lib/alerts.js';
+import {
+  getTierScoreForEvaluation,
+  renderPointsPage,
+  renderRewardsPage,
+  renderPetCreatePage,
+  renderPetDashboard,
+} from './auth/callback.js';
 
 async function getSpendableBalance(memberId) {
   const yearStart = getCurrentYearStart();
@@ -45,12 +52,46 @@ export default async function handler(req, res) {
 
   // ---------- เช็คแต้มของฉัน (เดิม /api/points) ----------
   if (doParam === 'points') {
+    const memberId = getMemberFromSession(req);
+    if (memberId) {
+      // มี Session อยู่แล้ว (เพิ่ง Login มาหน้าอื่นในกลุ่ม Member) — เปิดตรงได้เลย ไม่ต้องผ่าน LINE ซ้ำ
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (member) {
+        const [tierScore, spendableBalance, historyRes] = await Promise.all([
+          getTierScoreForEvaluation(member.id, member.created_at),
+          getSpendableBalance(member.id),
+          supabase
+            .from('points_ledger')
+            .select('reward_points, tier_score, creative_id, reason, created_at')
+            .eq('member_id', member.id)
+            .order('created_at', { ascending: false })
+            .limit(20),
+        ]);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderPointsPage(member, historyRes.data || [], tierScore, spendableBalance));
+        return;
+      }
+    }
     redirectToLine(res, { action: 'view_points' });
     return;
   }
 
   // ---------- ดูของรางวัล (เดิม /api/rewards) ----------
   if (doParam === 'rewards') {
+    const memberId = getMemberFromSession(req);
+    if (memberId) {
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (member) {
+        const [tierScore, spendableBalance, rewardsRes] = await Promise.all([
+          getTierScoreForEvaluation(member.id, member.created_at),
+          getSpendableBalance(member.id),
+          supabase.from('rewards').select('id, name, points_cost, image_path').eq('active', true).order('points_cost', { ascending: true }),
+        ]);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderRewardsPage(member, rewardsRes.data || [], tierScore, spendableBalance));
+        return;
+      }
+    }
     redirectToLine(res, { action: 'view_rewards' });
     return;
   }
@@ -142,6 +183,26 @@ export default async function handler(req, res) {
 
   // ---------- เข้าเกมเลี้ยงสัตว์ (ครั้งแรกต้องผ่าน LINE เพื่อยืนยันตัวตน จะได้ Session Cookie ติดมาด้วย) ----------
   if (doParam === 'pet') {
+    const memberId = getMemberFromSession(req);
+    if (memberId) {
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (member) {
+        const pet = await getMemberPet(member.id);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        if (!pet) {
+          res.status(200).send(renderPetCreatePage(member));
+          return;
+        }
+        const [bag, closet, badges, spendableBalance] = await Promise.all([
+          getPetBag(pet.id),
+          getPetCloset(pet.id),
+          getPetBadges(pet.id),
+          getSpendableBalance(member.id),
+        ]);
+        res.status(200).send(renderPetDashboard(member, pet, bag, closet, badges, spendableBalance));
+        return;
+      }
+    }
     redirectToLine(res, { action: 'view_pet' });
     return;
   }
