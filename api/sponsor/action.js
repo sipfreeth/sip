@@ -38,6 +38,7 @@ import { createOmiseCharge, getOmiseCharge, verifySlipWithSlipOK, createOmiseCus
 import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorArea.js';
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
+import { sendVerificationEmail } from '../../lib/emailVerification.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 import { sendAlertEmail } from '../../lib/alerts.js';
@@ -102,6 +103,19 @@ export default async function handler(req, res) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.status(200).send(renderSignupPage('สมัครไม่สำเร็จ ลองใหม่อีกครั้ง', params));
         return;
+      }
+
+      // ส่งอีเมลยืนยัน — ไม่บล็อกการสมัคร ถ้าส่งไม่สำเร็จ (เช่น Resend ล่ม) ก็ยัง Login เข้าระบบได้ตามปกติ
+      try {
+        await sendVerificationEmail({
+          accountType: 'sponsor',
+          accountId: newSponsor.id,
+          email,
+          verifyActionUrl: '/api/sponsor/action?action=verify_email',
+          displayName: params.get('company_name'),
+        });
+      } catch (err) {
+        console.error('❌ ส่งอีเมลยืนยันไม่สำเร็จ (Sponsor สมัครสำเร็จอยู่ดี):', err.message);
       }
 
       res.setHeader('Set-Cookie', createSponsorSessionCookie(newSponsor.id));
@@ -217,6 +231,28 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ---------- ยืนยันอีเมล (คลิกจากลิงก์ในอีเมล) ----------
+  if (actionParam === 'verify_email') {
+    if (req.method !== 'GET') {
+      res.status(405).send('Method not allowed');
+      return;
+    }
+    const tokenData = await verifyResetToken(req.query.token);
+    if (!tokenData || tokenData.accountType !== 'sponsor_verify') {
+      res.status(400).send('ลิงก์ยืนยันอีเมลนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบแล้วขอลิงก์ใหม่จากหน้าโปรไฟล์');
+      return;
+    }
+    await supabase.from('sponsors').update({ email_verified_at: new Date().toISOString() }).eq('id', tokenData.accountId);
+    await markTokenUsed(tokenData.tokenHash);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(`<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"/><link rel="stylesheet" href="/theme.css"/></head>
+      <body style="font-family:sans-serif; text-align:center; padding:60px 20px;">
+        <h2>✅ ยืนยันอีเมลสำเร็จแล้ว!</h2>
+        <p><a href="/api/sponsor">กลับเข้าสู่ระบบ</a></p>
+      </body></html>`);
+    return;
+  }
+
   // ---------- LOGOUT ----------
   if (actionParam === 'logout') {
     res.setHeader('Set-Cookie', clearSponsorSessionCookie());
@@ -264,6 +300,25 @@ export default async function handler(req, res) {
   // ---------- ต่อจากนี้ต้อง login ก่อน ----------
   const sponsor = await requireSponsor(req, res);
   if (!sponsor) return;
+
+  // ---------- ส่งอีเมลยืนยันอีกครั้ง (เผื่ออีเมลแรกหาย/ไม่ได้รับ) ----------
+  if (actionParam === 'resend_verification') {
+    try {
+      await sendVerificationEmail({
+        accountType: 'sponsor',
+        accountId: sponsor.id,
+        email: sponsor.email,
+        verifyActionUrl: '/api/sponsor/action?action=verify_email',
+        displayName: sponsor.company_name,
+      });
+    } catch (err) {
+      res.status(500).send(`ส่งอีเมลไม่สำเร็จ: ${err.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/sponsor?page=profile&sent=1' });
+    res.end();
+    return;
+  }
 
   // ---------- OMISE RETURN (redirect กลับมาจากหน้า 3D Secure ของธนาคาร) ----------
   if (actionParam === 'omise_return') {
