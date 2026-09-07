@@ -27,7 +27,7 @@ const REWARD_POINTS_PER_ENGAGEMENT = 5; // ปรับจำนวนแต้�
 
 // หา Tier Score ในช่วงเวลาที่ใช้ตัดสิน Tier (ปีที่แล้วทั้งปี หรือปีนี้ถ้าเป็นสมาชิกใหม่)
 // นับทั้งจาก engagement (scan_qr) และรายการที่แอดมินปรับด้วยมือ (admin_adjust)
-async function getTierScoreForEvaluation(memberId, createdAt) {
+export async function getTierScoreForEvaluation(memberId, createdAt) {
   const { start, end } = getTierEvaluationPeriod(createdAt);
   let query = supabase
     .from('points_ledger')
@@ -41,7 +41,7 @@ async function getTierScoreForEvaluation(memberId, createdAt) {
 
 // หา Point คงเหลือที่ใช้แลกได้ (ได้ปีนี้ - ใช้ไปปีนี้) หมดอายุทุกสิ้นปี
 // นับทั้งจาก engagement (scan_qr) และรายการที่แอดมินปรับด้วยมือ (admin_adjust)
-async function getSpendableBalance(memberId) {
+export async function getSpendableBalance(memberId) {
   const yearStart = getCurrentYearStart();
   const [earnedRes, spentRes] = await Promise.all([
     supabase
@@ -58,6 +58,24 @@ async function getSpendableBalance(memberId) {
   const earned = (earnedRes.data || []).reduce((sum, row) => sum + row.reward_points, 0);
   const spent = (spentRes.data || []).reduce((sum, row) => sum + row.points_spent, 0);
   return earned - spent;
+}
+
+// ---------- เมนูสลับ 3 หน้าของ Member (เช็คแต้ม/ของรางวัล/สัตว์เลี้ยง) ใช้ร่วมกันทุกหน้า ----------
+function renderMemberNav(activePage) {
+  const tabs = [
+    { key: 'points', label: '💰 แต้ม', href: '/api/member-action?do=points' },
+    { key: 'rewards', label: '🎁 ของรางวัล', href: '/api/member-action?do=rewards' },
+    { key: 'pet', label: '🐾 สัตว์เลี้ยง', href: '/api/member-action?do=pet' },
+  ];
+  return `
+    <div class="member-nav">
+      ${tabs.map((t) => `<a href="${t.href}" class="member-nav-tab ${t.key === activePage ? 'active' : ''}">${t.label}</a>`).join('')}
+    </div>
+    <style>
+      .member-nav { display: flex; gap: 4px; max-width: 480px; margin: 0 auto 12px; background: white; border-radius: 12px; padding: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+      .member-nav-tab { flex: 1; text-align: center; padding: 10px 4px; border-radius: 8px; text-decoration: none; color: #6b7280; font-size: 13px; font-weight: 600; }
+      .member-nav-tab.active { background: #1b1f27; color: white; }
+    </style>`;
 }
 
 export default async function handler(req, res) {
@@ -138,6 +156,7 @@ export default async function handler(req, res) {
         .limit(20),
     ]);
 
+    res.setHeader('Set-Cookie', createMemberSessionCookie(member.id));
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(renderPointsPage(member, historyRes.data || [], tierScore, spendableBalance));
     return;
@@ -151,6 +170,7 @@ export default async function handler(req, res) {
       supabase.from('rewards').select('id, name, points_cost, image_path').eq('active', true).order('points_cost', { ascending: true }),
     ]);
 
+    res.setHeader('Set-Cookie', createMemberSessionCookie(member.id));
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(renderRewardsPage(member, rewardsRes.data || [], tierScore, spendableBalance));
     return;
@@ -325,7 +345,7 @@ function renderPromoCodePage({ campaignName, promoCode, promoInstructions, spend
 </html>`;
 }
 
-function renderPointsPage(member, history, tierScore, spendableBalance) {
+export function renderPointsPage(member, history, tierScore, spendableBalance) {
   const { current, next, pointsToNext } = getTier(tierScore);
   const rows = history
     .map((h) => {
@@ -345,6 +365,8 @@ function renderPointsPage(member, history, tierScore, spendableBalance) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="/theme.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#ff5b2e" />
 <script src="/theme.js" defer></script>
 <title>แต้มของฉัน</title>
 <style>
@@ -361,6 +383,7 @@ function renderPointsPage(member, history, tierScore, spendableBalance) {
 </style>
 </head>
 <body>
+  ${renderMemberNav('points')}
   <div class="card">
     <p style="color:#6b7280; margin:0;">${member.display_name ? member.display_name : 'สมาชิก'}</p>
     <span class="tier-badge" style="background:${current.color};">${current.name}</span>
@@ -390,7 +413,7 @@ function renderPointsPage(member, history, tierScore, spendableBalance) {
 </html>`;
 }
 
-function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
+export function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
   const { current } = getTier(tierScore);
   const items = rewards
     .map((r) => {
@@ -418,6 +441,8 @@ function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="/theme.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#ff5b2e" />
 <script src="/theme.js" defer></script>
 <title>ของรางวัล</title>
 <style>
@@ -435,6 +460,7 @@ function renderRewardsPage(member, rewards, tierScore, spendableBalance) {
 </style>
 </head>
 <body>
+  ${renderMemberNav('rewards')}
   <div class="card">
     <p style="color:#6b7280; margin:0;">Sip ของฉัน</p>
     <span class="tier-badge" style="background:${current.color};">${current.name}</span>
@@ -543,7 +569,7 @@ function renderErrorPage(title, message) {
 const SPECIES_EMOJI = { cat: '🐱', dog: '🐶', bird: '🐦', monkey: '🐵' };
 const LEVEL_COLOR = { 1: '#a7f3d0', 2: '#93c5fd', 3: '#c4b5fd', 4: '#fde68a' };
 
-function renderPetCreatePage(member) {
+export function renderPetCreatePage(member) {
   const options = SPECIES_LIST.map(
     (s) => `
       <label class="species-option">
@@ -579,6 +605,7 @@ function renderPetCreatePage(member) {
 </style>
 </head>
 <body>
+  ${renderMemberNav('pet')}
   <div class="card">
     <h1>สร้างสัตว์เลี้ยงตัวแรกของคุณ 🎉</h1>
     <p class="hint">เลี้ยงดูให้ดี ให้อาหาร เล่นด้วย จะโตขึ้นเรื่อยๆ</p>
@@ -612,7 +639,7 @@ function renderPetCreatePage(member) {
 </html>`;
 }
 
-function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) {
+export function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) {
   const config = { level2: 100, level3: 300, level4: 700 }; // แค่ใช้แสดงผล progress bar คร่าวๆ (ค่าจริงคำนวณฝั่งเซิร์ฟเวอร์)
   const thresholds = { 1: 0, 2: config.level2, 3: config.level3, 4: config.level4 };
   const nextThreshold = pet.isMaxLevel ? pet.exp : thresholds[pet.level + 1];
@@ -665,6 +692,7 @@ function renderPetDashboard(member, pet, bag, closet, badges, spendableBalance) 
 </style>
 </head>
 <body>
+  ${renderMemberNav('pet')}
   <div class="card">
     ${
       pet.isSick
