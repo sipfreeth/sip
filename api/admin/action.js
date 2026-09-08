@@ -571,7 +571,8 @@ export default async function handler(req, res) {
       res.status(400).send(`ล้างข้อมูลไม่สำเร็จ: ${err.message}`);
       return;
     }
-    res.writeHead(302, { Location: '/api/admin/inactive-members' });
+    // กลับไปหน้าที่เรียกมา — ถ้าไม่ระบุ (เช่น เรียกจากหน้าสมาชิกไม่ใช้งานนาน) กลับไปหน้ารายชื่อสมาชิกทั่วไปเป็นค่าเริ่มต้น
+    res.writeHead(302, { Location: params.get('redirect_to') || '/api/admin/members' });
     res.end();
     return;
   }
