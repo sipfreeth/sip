@@ -15,6 +15,7 @@ import { requireAdmin, can } from '../../lib/adminAuth.js';
 import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
 import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent, getAiringStatus, AIRING_STATUS_LABEL, getOfficeSlotCategories, BUSINESS_TYPE_LABEL } from '../../lib/sponsorArea.js';
 import { getAdminChatThreads } from '../../lib/chat.js';
+import { getInactiveMembers } from '../../lib/memberCleanup.js';
 
 const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat', 'pet-shop'];
 
@@ -40,6 +41,7 @@ export default async function handler(req, res) {
   if (page === 'sponsors') content = await renderSponsorsTab(admin, req.query);
   if (page === 'chat') content = await renderChatTab(admin, req.query);
   if (page === 'pet-shop') content = await renderPetShopAdminTab(admin, req.query);
+  if (page === 'inactive-members') content = await renderInactiveMembersTab(admin);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, admin, content));
@@ -525,6 +527,46 @@ async function renderMemberDetail(admin, memberId) {
 
     ${adjustForm}
     ${deleteForm}`;
+}
+
+// ---------- สมาชิกที่ไม่ใช้งานนาน (ตาม Privacy Policy — เก็บได้ 2 ปีนับจากใช้งานล่าสุด) ----------
+async function renderInactiveMembersTab(admin) {
+  const members = await getInactiveMembers();
+
+  const rows = members
+    .map((m) => {
+      const daysInactive = Math.floor((Date.now() - new Date(m.last_active_at).getTime()) / (1000 * 60 * 60 * 24));
+      return `
+        <tr>
+          <td>${m.display_name || '-'}</td>
+          <td>${new Date(m.joined_at).toLocaleDateString('th-TH')}</td>
+          <td>${new Date(m.last_active_at).toLocaleDateString('th-TH')}</td>
+          <td style="text-align:center;">${(daysInactive / 365).toFixed(1)} ปี</td>
+          <td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=member_notify_inactive" style="display:inline;">
+              <input type="hidden" name="member_id" value="${m.id}" />
+              <button class="btn-small">📩 ส่งแจ้งเตือน</button>
+            </form>
+            <form method="POST" action="/api/admin/action?action=member_anonymize" onsubmit="return confirm('ล้างข้อมูลระบุตัวตนของสมาชิกคนนี้? แต้ม/ประวัติยังอยู่ แต่จะไม่รู้ว่าเป็นใครอีกแล้ว ย้อนกลับไม่ได้')" style="display:inline;">
+              <input type="hidden" name="member_id" value="${m.id}" />
+              <button class="btn-small btn-danger">ล้างข้อมูล</button>
+            </form>
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>สมาชิกที่ไม่ใช้งานนาน (${members.length})</h2>
+      <p class="hint">ตามนโยบายความเป็นส่วนตัว — สมาชิกที่ไม่ได้สแกน QR หรือใช้งานเกิน 2 ปี รายชื่อจะโผล่มาที่นี่</p>
+      <p class="hint">💡 <strong>แนะนำ:</strong> กด "ส่งแจ้งเตือน" ก่อนเป็นอันดับแรก (ชวนกลับมาใช้งาน) — ใช้ได้เฉพาะคนที่เพิ่มเพื่อน LINE OA ไว้แล้วเท่านั้น ถ้าไม่ได้เพิ่มเพื่อนไว้จะขึ้น Error แจ้งเหตุผลให้ทราบ ไม่ต้องตกใจ</p>
+      <p class="hint">"ล้างข้อมูล" คือทำให้ระบุตัวตนไม่ได้อีกต่อไป (Sip/ประวัติยังอยู่เพื่อทำรายงานภาพรวม) — การกระทำนี้ย้อนกลับไม่ได้ ใช้เฉพาะกรณีตัดสินใจแล้วว่าจะไม่ติดต่อกลับอีก</p>
+      <table>
+        <tr><th>ชื่อ</th><th>สมัครเมื่อ</th><th>ใช้งานล่าสุด</th><th style="text-align:center;">ไม่ใช้งานมา</th><th></th></tr>
+        ${rows || '<tr><td colspan="5" class="muted">ไม่มีสมาชิกที่เข้าเงื่อนไข ณ ตอนนี้</td></tr>'}
+      </table>
+    </div>`;
 }
 
 // ---------- Rewards tab ----------
@@ -1550,6 +1592,7 @@ function renderLayout(activePage, admin, content) {
     { key: 'sponsors', label: 'Sponsors' },
     { key: 'chat', label: 'แชท' },
     { key: 'pet-shop', label: 'ร้านสัตว์เลี้ยง' },
+    { key: 'inactive-members', label: 'สมาชิกไม่ใช้งานนาน' },
   ];
   if (can(admin.role, 'manage_admins') || can(admin.role, 'manage_staff')) tabs.push({ key: 'admins', label: 'Admins' });
   tabs.push({ key: 'account', label: 'My Account' });
