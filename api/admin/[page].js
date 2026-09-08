@@ -495,14 +495,23 @@ async function renderMemberDetail(admin, memberId) {
 
       <p style="font-weight:600; font-size:13px; margin:16px 0 4px; color:#e76f51;">⚠️ ลบถาวรทั้งหมด (Hard Delete)</p>
       <p class="hint">การลบไม่สามารถย้อนกลับได้ ประวัติทั้งหมดของสมาชิกคนนี้จะหายไป — ถ้าสมาชิกคนนี้มีประวัติแลกของรางวัล/สแกน/สัตว์เลี้ยงอยู่ อาจลบไม่สำเร็จเพราะติด Foreign Key ให้ใช้ทางเลือกด้านบนแทนถ้าเจอปัญหานี้</p>
-      <form method="POST" action="/api/admin/action?action=member_delete" onsubmit="return confirm('ยืนยันลบสมาชิกนี้ถาวร? ข้อมูลทั้งหมดจะกู้คืนไม่ได้')">
-        <input type="hidden" name="member_id" value="${member.id}" />
-        <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin:8px 0;">
-          <input type="checkbox" name="confirm" value="yes" required />
-          ฉันเข้าใจว่าการลบนี้ถาวรและไม่สามารถกู้คืนได้
-        </label>
-        <button type="submit" class="btn-danger">ลบสมาชิกถาวร</button>
-      </form>
+      <button type="button" class="btn-danger" onclick="document.getElementById('deleteMemberModal').style.display='flex'">ลบสมาชิกถาวร</button>
+
+      <div id="deleteMemberModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:white; border-radius:12px; padding:24px; max-width:420px; width:100%;">
+          <h3 style="margin:0 0 8px; color:#e76f51;">⚠️ ยืนยันลบสมาชิกถาวร</h3>
+          <p class="hint" style="margin:0 0 12px;">การกระทำนี้ย้อนกลับไม่ได้ กรุณาพิมพ์คำว่า <strong>"ลบถาวร"</strong> ในช่องด้านล่างเพื่อยืนยัน</p>
+          <form method="POST" action="/api/admin/action?action=member_delete">
+            <input type="hidden" name="member_id" value="${member.id}" />
+            <input type="hidden" name="confirm" value="yes" />
+            <input type="text" id="deleteConfirmInput" placeholder="พิมพ์ว่า ลบถาวร" class="table-input" style="width:100%; margin-bottom:12px;" oninput="document.getElementById('deleteConfirmBtn').disabled = this.value.trim() !== 'ลบถาวร'" />
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn-small" style="flex:1; background:#9ca3af; color:white;" onclick="document.getElementById('deleteMemberModal').style.display='none'; document.getElementById('deleteConfirmInput').value=''; document.getElementById('deleteConfirmBtn').disabled=true;">ยกเลิก</button>
+              <button type="submit" id="deleteConfirmBtn" class="btn-danger" style="flex:1;" disabled>ยืนยันลบถาวร</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>`
     : '';
 
