@@ -75,6 +75,8 @@ export default async function handler(req, res) {
   lineAuthUrl.searchParams.set('redirect_uri', process.env.LINE_CALLBACK_URL);
   lineAuthUrl.searchParams.set('state', state);
   lineAuthUrl.searchParams.set('scope', 'profile openid');
+  // ชวนเพิ่มเพื่อน OA ที่ผูกไว้ (Console > LINE Login > Linked LINE Official Account) แบบไม่รบกวนมาก
+  lineAuthUrl.searchParams.set('bot_prompt', 'normal');
 
   res.writeHead(302, { Location: lineAuthUrl.toString() });
   res.end();
