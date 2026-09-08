@@ -33,6 +33,8 @@ import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '.
 import { toCsv, sendCsv } from '../../lib/csv.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 import { sendVerificationEmail } from '../../lib/emailVerification.js';
+import { anonymizeMember } from '../../lib/memberCleanup.js';
+import { sendLinePushMessage } from '../../lib/linePush.js';
 
 async function readBody(req) {
   let body = '';
@@ -556,6 +558,43 @@ export default async function handler(req, res) {
     }
     await supabase.from('members').delete().eq('id', params.get('member_id'));
     res.writeHead(302, { Location: '/api/admin/members' });
+    res.end();
+    return;
+  }
+
+  // ---------- ล้างข้อมูลระบุตัวตนของสมาชิกที่ไม่ใช้งานนาน (ตาม Privacy Policy — เก็บได้ 2 ปีนับจากใช้งานล่าสุด) ----------
+  if (actionParam === 'member_anonymize') {
+    if (!requirePermission(res, admin.role, 'delete_member')) return;
+    try {
+      await anonymizeMember(params.get('member_id'));
+    } catch (err) {
+      res.status(400).send(`ล้างข้อมูลไม่สำเร็จ: ${err.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/admin/inactive-members' });
+    res.end();
+    return;
+  }
+
+  // ---------- ส่งแจ้งเตือนชวนกลับมาใช้งาน (แทนที่การลบ) — ใช้ได้เฉพาะคนที่เพิ่มเพื่อน OA ไว้แล้วเท่านั้น ----------
+  if (actionParam === 'member_notify_inactive') {
+    const memberId = params.get('member_id');
+    const { data: member } = await supabase.from('members').select('line_user_id, display_name').eq('id', memberId).maybeSingle();
+    if (!member) {
+      res.status(404).send('ไม่พบสมาชิกนี้');
+      return;
+    }
+    try {
+      await sendLinePushMessage(
+        member.line_user_id,
+        `สวัสดีครับ${member.display_name ? ` คุณ${member.display_name}` : ''} 👋\nเราคิดถึงคุณนะ! กลับมาเก็บ Sip และเล่นกับสัตว์เลี้ยงของคุณได้เลยที่ ${process.env.APP_BASE_URL}/api/member-action?do=pet`
+      );
+    } catch (err) {
+      // ล้มเหลวส่วนใหญ่มาจากยังไม่ได้เพิ่มเพื่อน OA — แจ้งเหตุผลกลับไปให้ Admin เห็นตรงๆ ไม่ต้องเดา
+      res.status(400).send(`ส่งแจ้งเตือนไม่สำเร็จ (อาจเป็นเพราะสมาชิกยังไม่ได้เพิ่มเพื่อน LINE OA): ${err.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/admin/inactive-members?notified=1' });
     res.end();
     return;
   }
