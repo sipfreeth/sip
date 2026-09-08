@@ -480,8 +480,21 @@ async function renderMemberDetail(admin, memberId) {
   const deleteForm = canDeleteMember
     ? `
     <div class="section">
-      <h2 style="color:#e76f51;">ลบสมาชิกนี้</h2>
-      <p class="hint">การลบไม่สามารถย้อนกลับได้ ประวัติทั้งหมดของสมาชิกคนนี้จะหายไป</p>
+      <h2 style="color:#e76f51;">ลบ/ล้างข้อมูลสมาชิกนี้</h2>
+      <p class="hint">ใช้กรณีสมาชิกร้องขอให้ลบข้อมูลตามสิทธิ PDPA — ไม่ต้องรอเงื่อนไขไม่ใช้งาน 2 ปี ใช้ได้ทันทีไม่ว่าจะ Active อยู่หรือไม่</p>
+
+      <div style="background:#f7f8fa; border-radius:8px; padding:12px; margin:12px 0;">
+        <p style="font-weight:600; font-size:13px; margin:0 0 4px;">✅ แนะนำ: ล้างข้อมูลระบุตัวตน (Anonymize)</p>
+        <p class="hint" style="margin:0 0 8px;">Sip/ประวัติการสแกน/การแลกของรางวัลยังอยู่ครบ (ใช้ทำรายงานภาพรวมได้ปกติ) แค่ลบชื่อ/รูปโปรไฟล์/การผูกกับ LINE ออก ทำให้ระบุตัวตนไม่ได้อีกต่อไป — ปลอดภัยกว่า ไม่กระทบข้อมูลอื่นที่เชื่อมโยงอยู่</p>
+        <form method="POST" action="/api/admin/action?action=member_anonymize" onsubmit="return confirm('ล้างข้อมูลระบุตัวตนของสมาชิกคนนี้? ย้อนกลับไม่ได้')">
+          <input type="hidden" name="member_id" value="${member.id}" />
+          <input type="hidden" name="redirect_to" value="/api/admin/members" />
+          <button type="submit" class="btn-small">ล้างข้อมูลระบุตัวตน</button>
+        </form>
+      </div>
+
+      <p style="font-weight:600; font-size:13px; margin:16px 0 4px; color:#e76f51;">⚠️ ลบถาวรทั้งหมด (Hard Delete)</p>
+      <p class="hint">การลบไม่สามารถย้อนกลับได้ ประวัติทั้งหมดของสมาชิกคนนี้จะหายไป — ถ้าสมาชิกคนนี้มีประวัติแลกของรางวัล/สแกน/สัตว์เลี้ยงอยู่ อาจลบไม่สำเร็จเพราะติด Foreign Key ให้ใช้ทางเลือกด้านบนแทนถ้าเจอปัญหานี้</p>
       <form method="POST" action="/api/admin/action?action=member_delete" onsubmit="return confirm('ยืนยันลบสมาชิกนี้ถาวร? ข้อมูลทั้งหมดจะกู้คืนไม่ได้')">
         <input type="hidden" name="member_id" value="${member.id}" />
         <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin:8px 0;">
@@ -549,6 +562,7 @@ async function renderInactiveMembersTab(admin) {
             </form>
             <form method="POST" action="/api/admin/action?action=member_anonymize" onsubmit="return confirm('ล้างข้อมูลระบุตัวตนของสมาชิกคนนี้? แต้ม/ประวัติยังอยู่ แต่จะไม่รู้ว่าเป็นใครอีกแล้ว ย้อนกลับไม่ได้')" style="display:inline;">
               <input type="hidden" name="member_id" value="${m.id}" />
+              <input type="hidden" name="redirect_to" value="/api/admin/inactive-members" />
               <button class="btn-small btn-danger">ล้างข้อมูล</button>
             </form>
           </td>
