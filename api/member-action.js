@@ -43,6 +43,9 @@ function redirectToLine(res, state) {
   lineAuthUrl.searchParams.set('redirect_uri', process.env.LINE_CALLBACK_URL);
   lineAuthUrl.searchParams.set('state', encodedState);
   lineAuthUrl.searchParams.set('scope', 'profile openid');
+  // ชวนเพิ่มเพื่อน OA ที่ผูกไว้ (Console > LINE Login > Linked LINE Official Account) แบบไม่รบกวนมาก
+  // ต้องตั้งค่า "Linked LINE Official Account" ใน Console ให้ตรงกับ OA ก่อน ไม่งั้นพารามิเตอร์นี้จะไม่มีผลอะไรเลย
+  lineAuthUrl.searchParams.set('bot_prompt', 'normal');
   res.writeHead(302, { Location: lineAuthUrl.toString() });
   res.end();
 }
