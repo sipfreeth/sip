@@ -495,7 +495,22 @@ export default async function handler(req, res) {
     }
 
     if (actionParam === 'office_account_delete') {
-      const { error } = await supabase.from('office_accounts').delete().eq('id', params.get('office_id'));
+      const officeId = params.get('office_id');
+
+      // ถ้ามีประวัติการจองของ Sponsor ผูกอยู่ (แม้จะจบไปแล้ว) ไม่ให้ลบ — เป็นข้อมูลการเงิน/ประวัติสำคัญ ไม่ควรหายไปเฉยๆ
+      const { count: bookingCount } = await supabase
+        .from('slot_bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('office_account_id', officeId);
+
+      if (bookingCount > 0) {
+        res.status(400).send(`ลบไม่ได้ เพราะ Office นี้มีประวัติการจองของ Sponsor อยู่ ${bookingCount} รายการ (เป็นข้อมูลสำคัญ ไม่ควรลบทิ้ง) — ถ้าต้องการปิดใช้งานจริง แนะนำแก้ไขข้อมูลบัญชีแทนการลบ`);
+        return;
+      }
+
+      // ไม่มีประวัติการจองผูกอยู่ — ลบ Content ที่ผูกกับ office นี้ก่อน แล้วค่อยลบบัญชี (กัน Foreign Key constraint)
+      await supabase.from('office_content').delete().eq('office_account_id', officeId);
+      const { error } = await supabase.from('office_accounts').delete().eq('id', officeId);
       dbError = error;
     }
 
