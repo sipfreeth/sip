@@ -4,11 +4,49 @@
 // เห็นและแก้ไขได้แค่ content ของตัวเองเท่านั้น (ผูกกับ office_account_id จาก session)
 
 import { requireOffice } from '../../lib/officeAuth.js';
-import { getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
+import { getSlots, renderOfficeAreaContent, renderDemographicsForm } from '../../lib/officeArea.js';
 
 export default async function handler(req, res) {
   const office = await requireOffice(req, res);
   if (!office) return;
+
+  // ---------- บังคับกรอกข้อมูล Demographic ก่อนใช้งานครั้งแรก (ยังไม่เคยกรอกเลย) ----------
+  if (!office.demographics_completed_at) {
+    const gateContent = renderDemographicsForm(office, { saveAction: '/api/office/action?action=save_demographics', isOnboarding: true });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(`<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="/theme.css" />
+<script src="/theme.js" defer></script>
+<title>กรอกข้อมูลก่อนเริ่มใช้งาน — Office Area</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: sans-serif; background: #f7f8fa; margin: 0; color: #1b1f27; }
+  header { background: white; border-bottom: 1px solid #e5e7eb; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { font-weight: 700; }
+  .logout-link { color: #e76f51; text-decoration: none; font-size: 13px; }
+  main { padding: 24px; max-width: 640px; margin: 0 auto; }
+  .section { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .hint, .muted { font-size: 12px; color: #9ca3af; }
+  label { display: block; font-size: 13px; color: #6b7280; margin: 10px 0 4px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; }
+  .btn-primary { background: #1b1f27; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">Office Area</div>
+    <a href="/api/office/action?action=logout" class="logout-link">Logout</a>
+  </header>
+  <main>${gateContent}</main>
+</body>
+</html>`);
+    return;
+  }
 
   const slots = await getSlots(office.id);
 
@@ -33,6 +71,8 @@ export default async function handler(req, res) {
         <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึกรหัสผ่านใหม่</button>
       </form>
     </div>`;
+
+  const demographicsSection = renderDemographicsForm(office, { saveAction: '/api/office/action?action=save_demographics', isOnboarding: false });
 
   const chatSection = `
     <div class="section">
@@ -119,7 +159,7 @@ export default async function handler(req, res) {
           ${office.email ? `<form method="POST" action="/api/office/action?action=resend_verification" style="display:inline;"><button class="btn-small">ส่งอีเมลยืนยันอีกครั้ง</button></form>` : ''}
         </div>`
       : ''
-  }${content}${chatSection}${passwordSection}</main>
+  }${content}${chatSection}${demographicsSection}${passwordSection}</main>
 </body>
 </html>`);
 }
