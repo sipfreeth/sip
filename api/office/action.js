@@ -12,7 +12,7 @@
 import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { createOfficeSessionCookie, clearOfficeSessionCookie, requireOffice } from '../../lib/officeAuth.js';
-import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
+import { createUploadTarget, saveSlotContent, saveOfficeDemographics } from '../../lib/officeArea.js';
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
@@ -220,6 +220,39 @@ export default async function handler(req, res) {
 
     const hash = await bcrypt.hash(params.get('new_password'), 10);
     await supabase.from('office_accounts').update({ password_hash: hash }).eq('id', office.id);
+    res.writeHead(302, { Location: '/api/office' });
+    res.end();
+    return;
+  }
+
+  // ---------- บันทึกข้อมูล Demographic (ทั้งตอนกรอกครั้งแรกและแก้ไขทีหลัง) ----------
+  if (actionParam === 'save_demographics') {
+    const params = await readBody(req);
+    const maleCount = Number(params.get('male_count'));
+    const femaleCount = Number(params.get('female_count'));
+    const otherCount = Number(params.get('other_count')) || 0;
+    const ageMin = Number(params.get('age_min'));
+    const ageMax = Number(params.get('age_max'));
+
+    if (!Number.isFinite(maleCount) || !Number.isFinite(femaleCount) || !Number.isFinite(ageMin) || !Number.isFinite(ageMax) || ageMin > ageMax) {
+      res.status(400).send('ข้อมูลไม่ถูกต้อง กรุณากรอกตัวเลขให้ครบและช่วงอายุต้องถูกต้อง (น้อยไปมาก)');
+      return;
+    }
+
+    try {
+      await saveOfficeDemographics(office.id, {
+        maleCount,
+        femaleCount,
+        otherCount,
+        ageMin,
+        ageMax,
+        notes: params.get('notes'),
+      });
+    } catch (err) {
+      res.status(400).send(`บันทึกไม่สำเร็จ: ${err.message}`);
+      return;
+    }
+
     res.writeHead(302, { Location: '/api/office' });
     res.end();
     return;
