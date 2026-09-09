@@ -12,8 +12,8 @@
 import { supabase } from '../../lib/supabaseClient.js';
 import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { requireAdmin, can } from '../../lib/adminAuth.js';
-import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent } from '../../lib/officeArea.js';
-import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent, getAiringStatus, AIRING_STATUS_LABEL, getOfficeSlotCategories, BUSINESS_TYPE_LABEL } from '../../lib/sponsorArea.js';
+import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent, renderDemographicsForm } from '../../lib/officeArea.js';
+import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponsors, getSponsorById, getSponsorContent, getSponsorCreditBalance, getPreviouslyApprovedContent, getAiringStatus, AIRING_STATUS_LABEL, getOfficeSlotCategories, BUSINESS_TYPE_LABEL, getDemographicRules } from '../../lib/sponsorArea.js';
 import { getAdminChatThreads } from '../../lib/chat.js';
 import { getInactiveMembers } from '../../lib/memberCleanup.js';
 
@@ -42,6 +42,7 @@ export default async function handler(req, res) {
   if (page === 'chat') content = await renderChatTab(admin, req.query);
   if (page === 'pet-shop') content = await renderPetShopAdminTab(admin, req.query);
   if (page === 'inactive-members') content = await renderInactiveMembersTab(admin);
+  if (page === 'demographic-rules') content = await renderDemographicRulesTab(admin);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(renderLayout(page, admin, content));
@@ -592,6 +593,47 @@ async function renderInactiveMembersTab(admin) {
     </div>`;
 }
 
+// ---------- กฎการแนะนำ Office ให้ตรง Sponsor ตาม Demographic ----------
+async function renderDemographicRulesTab(admin) {
+  const rulesMap = await getDemographicRules();
+
+  const genderOptions = (current) =>
+    ['any', 'female', 'male']
+      .map((g) => `<option value="${g}" ${current === g ? 'selected' : ''}>${{ any: 'ไม่ระบุ (ทุกเพศ)', female: 'เอียงไปทางหญิง', male: 'เอียงไปทางชาย' }[g]}</option>`)
+      .join('');
+
+  const rows = Object.entries(BUSINESS_TYPE_LABEL)
+    .map(([key, label]) => {
+      const rule = rulesMap[key] || { preferred_gender: 'any', preferred_age_min: 18, preferred_age_max: 65 };
+      return `
+        <tr>
+          <td>${label}</td>
+          <td>
+            <form method="POST" action="/api/admin/action?action=save_demographic_rule" class="inline-form" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <input type="hidden" name="business_type" value="${key}" />
+              <select name="preferred_gender" class="table-input" style="width:auto;">${genderOptions(rule.preferred_gender)}</select>
+              <input type="number" name="age_min" value="${rule.preferred_age_min}" class="table-input small" style="width:60px;" min="15" max="80" />
+              <span class="hint">ถึง</span>
+              <input type="number" name="age_max" value="${rule.preferred_age_max}" class="table-input small" style="width:60px;" min="15" max="80" />
+              <span class="hint">ปี</span>
+              <button class="btn-small">บันทึก</button>
+            </form>
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>กฎการแนะนำ Office ให้ Sponsor</h2>
+      <p class="hint">กำหนดว่าธุรกิจแต่ละประเภทเหมาะกับออฟฟิศที่มีพนักงานเพศ/ช่วงอายุแบบไหน — ระบบจะขึ้นคำว่า "(แนะนำ)" ต่อท้ายชื่อ Office ที่ตรงเงื่อนไขให้ Sponsor เห็นตอนเลือกจอง Slot เกณฑ์นี้เป็นแค่จุดเริ่มต้น ปรับได้ทุกเมื่อตามความเหมาะสมจริง</p>
+      <table>
+        <tr><th>ประเภทธุรกิจ</th><th>เงื่อนไข</th></tr>
+        ${rows}
+      </table>
+    </div>`;
+}
+
 // ---------- Rewards tab ----------
 async function renderRewardsTab(admin) {
   const { data: rewards } = await supabase.from('rewards').select('id, name, points_cost, active, image_path').order('id');
@@ -908,7 +950,12 @@ async function renderOfficeTab(admin, selectedOfficeId) {
 
   const playStats = await renderPlaybackStats(officeAccount.id);
 
-  return manageSection + picker + officeContent + playStats;
+  const demographicsSection = renderDemographicsForm(officeAccount, {
+    saveAction: `/api/admin/action?action=office_save_demographics&office=${officeAccount.id}`,
+    isOnboarding: false,
+  });
+
+  return manageSection + picker + officeContent + playStats + demographicsSection;
 }
 
 // ยอดรอบการเล่นเนื้อหาจริงบนจอ (ข้อมูลจาก CMS ที่ยิงเข้ามาทาง /api/playback-log)
@@ -1616,6 +1663,7 @@ function renderLayout(activePage, admin, content) {
     { key: 'chat', label: 'แชท' },
     { key: 'pet-shop', label: 'ร้านสัตว์เลี้ยง' },
     { key: 'inactive-members', label: 'สมาชิกไม่ใช้งานนาน' },
+    { key: 'demographic-rules', label: 'กฎการแนะนำ Office' },
   ];
   if (can(admin.role, 'manage_admins') || can(admin.role, 'manage_staff')) tabs.push({ key: 'admins', label: 'Admins' });
   tabs.push({ key: 'account', label: 'My Account' });
