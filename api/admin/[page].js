@@ -17,7 +17,7 @@ import { getSignedContentUrl, getSignedSlipUrl, getPendingBookings, searchSponso
 import { getAdminChatThreads } from '../../lib/chat.js';
 import { getInactiveMembers } from '../../lib/memberCleanup.js';
 
-const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat', 'pet-shop'];
+const PAGES = ['dashboard', 'members', 'rewards', 'campaigns', 'admins', 'office', 'account', 'sponsors', 'chat', 'pet-shop', 'inactive-members', 'demographic-rules'];
 
 export default async function handler(req, res) {
   const admin = await requireAdmin(req, res);
