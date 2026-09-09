@@ -27,8 +27,8 @@
 import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
-import { createUploadTarget, saveSlotContent } from '../../lib/officeArea.js';
-import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent } from '../../lib/sponsorArea.js';
+import { createUploadTarget, saveSlotContent, saveOfficeDemographics } from '../../lib/officeArea.js';
+import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent, saveDemographicRule } from '../../lib/sponsorArea.js';
 import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
 import { toCsv, sendCsv } from '../../lib/csv.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
@@ -631,6 +631,59 @@ export default async function handler(req, res) {
     } catch (err) {
       res.status(500).send(err.message);
     }
+    return;
+  }
+
+  // ---------- แก้ไขข้อมูล Demographic ของ Office แทน (Admin) ----------
+  if (actionParam === 'office_save_demographics') {
+    const officeAccountId = req.query.office;
+    const maleCount = Number(params.get('male_count'));
+    const femaleCount = Number(params.get('female_count'));
+    const otherCount = Number(params.get('other_count')) || 0;
+    const ageMin = Number(params.get('age_min'));
+    const ageMax = Number(params.get('age_max'));
+
+    if (!Number.isFinite(maleCount) || !Number.isFinite(femaleCount) || !Number.isFinite(ageMin) || !Number.isFinite(ageMax) || ageMin > ageMax) {
+      res.status(400).send('ข้อมูลไม่ถูกต้อง กรุณากรอกตัวเลขให้ครบและช่วงอายุต้องถูกต้อง (น้อยไปมาก)');
+      return;
+    }
+
+    try {
+      await saveOfficeDemographics(officeAccountId, {
+        maleCount,
+        femaleCount,
+        otherCount,
+        ageMin,
+        ageMax,
+        notes: params.get('notes'),
+      });
+    } catch (err) {
+      res.status(400).send(`บันทึกไม่สำเร็จ: ${err.message}`);
+      return;
+    }
+
+    res.writeHead(302, { Location: `/api/admin/office?office_id=${officeAccountId}` });
+    res.end();
+    return;
+  }
+
+  // ---------- บันทึกกฎการแนะนำ Office ตามประเภทธุรกิจ ----------
+  if (actionParam === 'save_demographic_rule') {
+    const businessType = params.get('business_type');
+    const ageMin = Number(params.get('age_min'));
+    const ageMax = Number(params.get('age_max'));
+    if (!businessType || !Number.isFinite(ageMin) || !Number.isFinite(ageMax) || ageMin > ageMax) {
+      res.status(400).send('ข้อมูลไม่ถูกต้อง');
+      return;
+    }
+    try {
+      await saveDemographicRule(businessType, { preferredGender: params.get('preferred_gender'), ageMin, ageMax });
+    } catch (err) {
+      res.status(400).send(`บันทึกไม่สำเร็จ: ${err.message}`);
+      return;
+    }
+    res.writeHead(302, { Location: '/api/admin/demographic-rules' });
+    res.end();
     return;
   }
 
