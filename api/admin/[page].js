@@ -1059,9 +1059,29 @@ function renderOfficeAccountManagement(offices) {
           </td>
           <td style="text-align:center;"><button class="btn-small">บันทึก</button></form></td>
           <td style="text-align:center;">
-            <form method="POST" action="/api/admin/action?action=office_account_delete" onsubmit="return confirm('ลบบัญชี Office นี้? Content ทุก Slot จะหายไปด้วย')" style="display:inline;">
+            ${
+              o.active
+                ? `<span style="color:#06c755; font-size:12px;">🟢 ใช้งานอยู่</span>`
+                : `<span style="color:#9ca3af; font-size:12px;">⚪ ปิดใช้งาน</span>`
+            }
+          </td>
+          <td style="text-align:center;">
+            ${
+              o.active
+                ? `<form method="POST" action="/api/admin/action?action=office_account_deactivate" onsubmit="return confirm('ปิดใช้งาน Office นี้? Sponsor จะจองใหม่ไม่ได้ (ข้อมูลเดิมยังอยู่ครบ เปิดกลับมาได้ทุกเมื่อ)')" style="display:inline;">
+                    <input type="hidden" name="office_id" value="${o.id}" />
+                    <button class="btn-small" style="background:#9ca3af;">ปิดใช้งาน</button>
+                  </form>`
+                : `<form method="POST" action="/api/admin/action?action=office_account_reactivate" style="display:inline;">
+                    <input type="hidden" name="office_id" value="${o.id}" />
+                    <button class="btn-small">เปิดใช้งาน</button>
+                  </form>`
+            }
+          </td>
+          <td style="text-align:center;">
+            <form method="POST" action="/api/admin/action?action=office_account_delete" onsubmit="return confirm('ลบบัญชี Office นี้ถาวร? ประวัติการจอง/Content ทั้งหมดจะหายไปด้วย กู้คืนไม่ได้')" style="display:inline;">
               <input type="hidden" name="office_id" value="${o.id}" />
-              <button class="btn-small btn-danger">ลบ</button>
+              <button class="btn-small btn-danger">ลบถาวร</button>
             </form>
           </td>
         </tr>`
@@ -1089,9 +1109,10 @@ function renderOfficeAccountManagement(offices) {
     </div>
     <div class="section">
       <h2>จัดการบัญชี Office ทั้งหมด</h2>
+      <p class="hint">"ปิดใช้งาน" ใช้กับ Office ที่ไม่มีจอติดตั้งอยู่แล้ว — กดได้ก็ต่อเมื่อไม่มีการจองที่กำลังเล่นอยู่หรือรอเข้าคิว (ที่จบไปแล้วไม่นับ) ข้อมูลเดิมยังอยู่ครบ เปิดกลับมาได้ทุกเมื่อ</p>
       <table>
-        <tr><th>ชื่อ Office</th><th>Username</th><th>อีเมล</th><th>ราคา/สัปดาห์</th><th>จำนวนสล็อต</th><th>รีเซ็ตรหัสผ่าน</th><th></th><th></th></tr>
-        ${rows || '<tr><td colspan="8" class="muted">ยังไม่มีบัญชี Office</td></tr>'}
+        <tr><th>ชื่อ Office</th><th>Username</th><th>อีเมล</th><th>ราคา/สัปดาห์</th><th>จำนวนสล็อต</th><th>รีเซ็ตรหัสผ่าน</th><th>สถานะ</th><th></th><th></th></tr>
+        ${rows || '<tr><td colspan="9" class="muted">ยังไม่มีบัญชี Office</td></tr>'}
       </table>
     </div>`;
 }
