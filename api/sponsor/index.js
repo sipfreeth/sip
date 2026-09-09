@@ -20,6 +20,8 @@ import {
   getAiringStatus,
   AIRING_STATUS_LABEL,
   BUSINESS_TYPE_LABEL,
+  getDemographicRules,
+  isOfficeRecommendedFor,
   MAX_FILES_PER_SPONSOR,
   MAX_IMAGE_MB,
   MAX_VIDEO_MB,
@@ -339,7 +341,7 @@ async function renderBookTab(sponsor, query) {
   const selectedOfficeId = query.office_id || null;
   const { data: offices } = await supabase
     .from('office_accounts')
-    .select('id, office_name, price_per_week, sponsor_slot_count')
+    .select('id, office_name, price_per_week, sponsor_slot_count, demo_male_count, demo_female_count, demo_other_count, demo_age_min, demo_age_max, demographics_completed_at')
     .order('office_name');
 
   if (!offices || !offices.length) {
@@ -352,8 +354,13 @@ async function renderBookTab(sponsor, query) {
 
   const approvedContent = await getSponsorContent(sponsor.id);
 
+  // เช็คว่า Office ไหน "แนะนำ" สำหรับธุรกิจของ Sponsor รายนี้บ้าง (ตามข้อมูล Demographic เทียบกับกฎที่ Admin ตั้งไว้)
+  const rulesMap = await getDemographicRules();
   const officeOptions = offices
-    .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} — ${Number(o.price_per_week).toLocaleString()} บาท/สัปดาห์</option>`)
+    .map((o) => {
+      const recommended = sponsor.business_type ? isOfficeRecommendedFor(o, sponsor.business_type, rulesMap) : false;
+      return `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} — ${Number(o.price_per_week).toLocaleString()} บาท/สัปดาห์${recommended ? ' ⭐ (แนะนำ)' : ''}</option>`;
+    })
     .join('');
 
   const picker = `
@@ -365,6 +372,7 @@ async function renderBookTab(sponsor, query) {
           ${officeOptions}
         </select>
       </form>
+      <p class="hint" style="margin-top:6px;">⭐ (แนะนำ) = ระบบวิเคราะห์แล้วว่าเหมาะกับกลุ่มลูกค้าของธุรกิจคุณ ตามข้อมูลพนักงานของออฟฟิศนั้น</p>
     </div>`;
 
   const { weeks, bookedMap } = await getAvailability(activeOffice.id);
