@@ -342,6 +342,7 @@ async function renderBookTab(sponsor, query) {
   const { data: offices } = await supabase
     .from('office_accounts')
     .select('id, office_name, price_per_week, sponsor_slot_count, demo_male_count, demo_female_count, demo_other_count, demo_age_min, demo_age_max, demographics_completed_at')
+    .eq('active', true) // Office ที่ปิดใช้งานแล้ว (ไม่มีจอติดตั้ง) ไม่ให้จองใหม่
     .order('office_name');
 
   if (!offices || !offices.length) {
