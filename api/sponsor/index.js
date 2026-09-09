@@ -358,7 +358,7 @@ async function renderBookTab(sponsor, query) {
   const rulesMap = await getDemographicRules();
   const officeOptions = offices
     .map((o) => {
-      const recommended = sponsor.business_type ? isOfficeRecommendedFor(o, sponsor.business_type, rulesMap) : false;
+      const recommended = isOfficeRecommendedFor(o, sponsor, rulesMap);
       return `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} — ${Number(o.price_per_week).toLocaleString()} บาท/สัปดาห์${recommended ? ' ⭐ (แนะนำ)' : ''}</option>`;
     })
     .join('');
@@ -991,6 +991,20 @@ async function renderProfileTab(sponsor) {
             .map(([key, label]) => `<option value="${key}" ${sponsor.business_type === key ? 'selected' : ''}>${label}</option>`)
             .join('')}
         </select>
+        <label>กลุ่มลูกค้าเป้าหมาย — เพศ</label>
+        <select name="target_gender">
+          <option value="">-- เลือก --</option>
+          <option value="female" ${sponsor.target_gender === 'female' ? 'selected' : ''}>เพศหญิง</option>
+          <option value="male" ${sponsor.target_gender === 'male' ? 'selected' : ''}>เพศชาย</option>
+          <option value="any" ${sponsor.target_gender === 'any' ? 'selected' : ''}>ไม่ระบุ (ทุกเพศ)</option>
+        </select>
+        <label>กลุ่มลูกค้าเป้าหมาย — ช่วงอายุ</label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="number" name="target_age_min" min="15" max="80" value="${sponsor.target_age_min ?? ''}" style="flex:1;" />
+          <span>ถึง</span>
+          <input type="number" name="target_age_max" min="15" max="80" value="${sponsor.target_age_max ?? ''}" style="flex:1;" />
+        </div>
+        <p class="hint">ใช้แนะนำ Office ที่มีพนักงานตรงกับกลุ่มลูกค้าเป้าหมายของคุณตอนเลือกจอง Slot</p>
         <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึก</button>
       </form>
     </div>
