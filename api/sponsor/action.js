@@ -75,6 +75,15 @@ export default async function handler(req, res) {
         return;
       }
 
+      const targetGender = params.get('target_gender');
+      const targetAgeMin = Number(params.get('target_age_min'));
+      const targetAgeMax = Number(params.get('target_age_max'));
+      if (!['female', 'male', 'any'].includes(targetGender) || !Number.isFinite(targetAgeMin) || !Number.isFinite(targetAgeMax) || targetAgeMin > targetAgeMax) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.status(200).send(renderSignupPage('กรุณากรอกข้อมูลกลุ่มลูกค้าเป้าหมายให้ครบและถูกต้อง', params));
+        return;
+      }
+
       const { data: existing } = await supabase.from('sponsors').select('id').eq('email', email).maybeSingle();
       if (existing) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -92,6 +101,9 @@ export default async function handler(req, res) {
           contact_name: params.get('contact_name') || null,
           contact_phone: params.get('contact_phone') || null,
           business_type: params.get('business_type') || null,
+          target_gender: targetGender,
+          target_age_min: targetAgeMin,
+          target_age_max: targetAgeMax,
           email,
           password_hash: hash,
           terms_accepted_at: new Date().toISOString(),
@@ -374,6 +386,9 @@ export default async function handler(req, res) {
         contact_name: params.get('contact_name') || null,
         contact_phone: params.get('contact_phone') || null,
         business_type: params.get('business_type') || null,
+        target_gender: params.get('target_gender') || null,
+        target_age_min: params.get('target_age_min') ? Number(params.get('target_age_min')) : null,
+        target_age_max: params.get('target_age_max') ? Number(params.get('target_age_max')) : null,
       })
       .eq('id', sponsor.id);
     res.writeHead(302, { Location: '/api/sponsor?page=profile' });
@@ -1009,6 +1024,20 @@ function renderSignupPage(error, formValues) {
           .map(([key, label]) => `<option value="${key}" ${v('business_type') === key ? 'selected' : ''}>${label}</option>`)
           .join('')}
       </select>
+      <label>กลุ่มลูกค้าเป้าหมาย — เพศ *</label>
+      <select name="target_gender" required>
+        <option value="">-- เลือก --</option>
+        <option value="female" ${v('target_gender') === 'female' ? 'selected' : ''}>เพศหญิง</option>
+        <option value="male" ${v('target_gender') === 'male' ? 'selected' : ''}>เพศชาย</option>
+        <option value="any" ${v('target_gender') === 'any' ? 'selected' : ''}>ไม่ระบุ (ทุกเพศ)</option>
+      </select>
+      <label>กลุ่มลูกค้าเป้าหมาย — ช่วงอายุ *</label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="number" name="target_age_min" min="15" max="80" value="${v('target_age_min')}" required style="flex:1;" />
+        <span>ถึง</span>
+        <input type="number" name="target_age_max" min="15" max="80" value="${v('target_age_max')}" required style="flex:1;" />
+      </div>
+      <p class="hint">ข้อมูลนี้ใช้แนะนำ Office ที่มีกลุ่มพนักงานตรงกับลูกค้าเป้าหมายของคุณตอนเลือกจอง Slot</p>
       <label>อีเมล (ใช้ login) *</label>
       <input type="email" name="email" value="${v('email')}" required />
       <label>รหัสผ่าน *</label>
