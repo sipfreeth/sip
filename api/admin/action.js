@@ -28,7 +28,7 @@ import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
 import { createUploadTarget, saveSlotContent, saveOfficeDemographics } from '../../lib/officeArea.js';
-import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent, saveDemographicRule } from '../../lib/sponsorArea.js';
+import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent, saveDemographicRule, getAiringStatus } from '../../lib/sponsorArea.js';
 import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
 import { toCsv, sendCsv } from '../../lib/csv.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
@@ -428,7 +428,7 @@ export default async function handler(req, res) {
   }
 
   // ---------- 6b. OFFICE ACCOUNT MANAGEMENT (super_admin, admin) ----------
-  if (['office_account_create', 'office_account_update', 'office_account_delete'].includes(actionParam)) {
+  if (['office_account_create', 'office_account_update', 'office_account_delete', 'office_account_deactivate', 'office_account_reactivate'].includes(actionParam)) {
     console.error('🔍OFFICE_DEBUG🔍 action:', actionParam, 'admin.role:', admin.role, 'canManageOffices:', can(admin.role, 'manage_offices'));
 
     if (!requirePermission(res, admin.role, 'manage_offices')) {
@@ -497,20 +497,38 @@ export default async function handler(req, res) {
     if (actionParam === 'office_account_delete') {
       const officeId = params.get('office_id');
 
-      // ถ้ามีประวัติการจองของ Sponsor ผูกอยู่ (แม้จะจบไปแล้ว) ไม่ให้ลบ — เป็นข้อมูลการเงิน/ประวัติสำคัญ ไม่ควรหายไปเฉยๆ
-      const { count: bookingCount } = await supabase
+      // ลบข้อมูลที่ผูกกับ office นี้ก่อนเสมอ (ประวัติการจอง + Content) แล้วค่อยลบบัญชี กัน Foreign Key constraint
+      await supabase.from('slot_bookings').delete().eq('office_account_id', officeId);
+      await supabase.from('office_content').delete().eq('office_account_id', officeId);
+      const { error } = await supabase.from('office_accounts').delete().eq('id', officeId);
+      dbError = error;
+    }
+
+    // ---------- Deactivate — ปิดใช้งาน Office ที่ไม่มีจอติดตั้งแล้ว ----------
+    // กดได้ก็ต่อเมื่อไม่มีการจองที่ "กำลังเล่นอยู่" หรือ "รอเข้าคิว" เท่านั้น — ที่จบไปแล้ว (ended) ไม่นับ ไม่บล็อก
+    if (actionParam === 'office_account_deactivate') {
+      const officeId = params.get('office_id');
+      const { data: bookings } = await supabase
         .from('slot_bookings')
-        .select('id', { count: 'exact', head: true })
+        .select('payment_status, approval_status, week_start')
         .eq('office_account_id', officeId);
 
-      if (bookingCount > 0) {
-        res.status(400).send(`ลบไม่ได้ เพราะ Office นี้มีประวัติการจองของ Sponsor อยู่ ${bookingCount} รายการ (เป็นข้อมูลสำคัญ ไม่ควรลบทิ้ง) — ถ้าต้องการปิดใช้งานจริง แนะนำแก้ไขข้อมูลบัญชีแทนการลบ`);
+      const hasActiveBooking = (bookings || []).some((b) => {
+        const status = getAiringStatus(b);
+        return status === 'now_playing' || status === 'upcoming';
+      });
+
+      if (hasActiveBooking) {
+        res.status(400).send('ปิดใช้งานไม่ได้ เพราะยังมีการจองที่กำลังเล่นอยู่หรือรอเข้าคิวอยู่ — รอให้จบสัปดาห์นั้นๆ ก่อนแล้วค่อยปิดใช้งาน');
         return;
       }
 
-      // ไม่มีประวัติการจองผูกอยู่ — ลบ Content ที่ผูกกับ office นี้ก่อน แล้วค่อยลบบัญชี (กัน Foreign Key constraint)
-      await supabase.from('office_content').delete().eq('office_account_id', officeId);
-      const { error } = await supabase.from('office_accounts').delete().eq('id', officeId);
+      const { error } = await supabase.from('office_accounts').update({ active: false }).eq('id', officeId);
+      dbError = error;
+    }
+
+    if (actionParam === 'office_account_reactivate') {
+      const { error } = await supabase.from('office_accounts').update({ active: true }).eq('id', params.get('office_id'));
       dbError = error;
     }
 
