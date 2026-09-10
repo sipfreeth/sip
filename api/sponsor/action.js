@@ -39,6 +39,7 @@ import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorAr
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendVerificationEmail } from '../../lib/emailVerification.js';
+import { createReceiptForGroup, getReceiptsForSponsor, getReceiptById, renderReceiptPage } from '../../lib/receipts.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 import { sendAlertEmail } from '../../lib/alerts.js';
@@ -303,6 +304,12 @@ export default async function handler(req, res) {
           'บันทึกการชำระเงิน Omise ไม่สำเร็จ (ลูกค้าจ่ายแล้วแต่ระบบไม่บันทึก)',
           `Charge ID: ${charge.id}\nError: ${error.message}\n\nกรุณาตรวจสอบและอัปเดตสถานะการจองด้วยมือด่วน`
         );
+      } else {
+        // ออกใบเสร็จอัตโนมัติ — Webhook นี้ไม่มี groupId ตรงๆ ต้องดึงจากแถวที่เพิ่งอัปเดตก่อน
+        const { data: updatedRows } = await supabase.from('slot_bookings').select('booking_group_id').eq('omise_charge_id', charge.id).limit(1);
+        if (updatedRows?.[0]?.booking_group_id) {
+          await createReceiptForGroup(updatedRows[0].booking_group_id);
+        }
       }
     }
     res.status(200).send('ok');
@@ -332,6 +339,23 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ---------- ดูใบเสร็จรับเงิน (พิมพ์/บันทึกเป็น PDF ได้จากเบราว์เซอร์) ----------
+  if (actionParam === 'view_receipt') {
+    const receipt = await getReceiptById(req.query.receipt_id, sponsor.id);
+    if (!receipt) {
+      res.status(404).send('ไม่พบใบเสร็จนี้');
+      return;
+    }
+    const { data: bookings } = await supabase
+      .from('slot_bookings')
+      .select('slot_number, week_start, price, office_accounts(office_name)')
+      .eq('booking_group_id', receipt.booking_group_id);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(renderReceiptPage(receipt, bookings || [], sponsor));
+    return;
+  }
+
   // ---------- OMISE RETURN (redirect กลับมาจากหน้า 3D Secure ของธนาคาร) ----------
   if (actionParam === 'omise_return') {
     const groupId = req.query.group_id;
@@ -351,6 +375,7 @@ export default async function handler(req, res) {
           .from('slot_bookings')
           .update({ payment_status: 'paid', payment_method: creditApplied > 0 ? 'card+credit' : 'omise' })
           .eq('booking_group_id', groupId);
+        await createReceiptForGroup(groupId);
       }
     } catch (err) {
       console.error('เช็คสถานะ Omise ไม่สำเร็จ:', err.message);
@@ -656,6 +681,7 @@ export default async function handler(req, res) {
           .from('slot_bookings')
           .update({ payment_status: 'paid', payment_method: creditToApply > 0 ? 'card+credit' : 'omise' })
           .eq('booking_group_id', groupId);
+        await createReceiptForGroup(groupId);
         res.status(200).json({ paid: true });
         return;
       }
@@ -695,6 +721,7 @@ export default async function handler(req, res) {
       // เครดิตครอบยอดเต็มพอดี ไม่ต้องผ่านธนาคารเลย
       await spendSponsorCredit(sponsor.id, creditToApply, `used_for_booking_group:${groupId}`);
       await supabase.from('slot_bookings').update({ payment_status: 'paid', payment_method: 'credit' }).eq('booking_group_id', groupId);
+      await createReceiptForGroup(groupId);
       res.status(200).json({ paid: true });
       return;
     }
@@ -744,6 +771,7 @@ export default async function handler(req, res) {
 
     await spendSponsorCredit(sponsor.id, totalPrice, `used_for_booking_group:${groupId}`);
     await supabase.from('slot_bookings').update({ payment_status: 'paid', payment_method: 'credit' }).eq('booking_group_id', groupId);
+    await createReceiptForGroup(groupId);
     res.status(200).json({ paid: true });
     return;
   }
@@ -840,6 +868,7 @@ export default async function handler(req, res) {
           .from('slot_bookings')
           .update({ payment_status: 'paid', payment_method: creditToApply > 0 ? 'transfer+credit' : 'transfer', payment_reference: result.data.transRef })
           .eq('booking_group_id', groupId);
+        await createReceiptForGroup(groupId);
         res.status(200).json({ paid: true });
         return;
       }
