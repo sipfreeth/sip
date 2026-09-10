@@ -28,6 +28,7 @@ import {
   MAX_VIDEO_SECONDS,
 } from '../../lib/sponsorArea.js';
 import { listCustomerCards, isPromptPayConfigured, getPromptPayQrImageUrl, SUPPORTED_BANKS } from '../../lib/payments.js';
+import { getReceiptsForSponsor } from '../../lib/receipts.js';
 
 const PAGES = ['content', 'book', 'bookings', 'profile', 'chat', 'qr'];
 
@@ -643,6 +644,28 @@ async function renderBookingsTab(sponsor, query) {
     })
   );
 
+  const receipts = await getReceiptsForSponsor(sponsor.id);
+  const receiptsSection = receipts.length
+    ? `
+    <div class="section">
+      <h2>ใบเสร็จรับเงิน</h2>
+      <table>
+        <tr><th>เลขที่</th><th>วันที่ออก</th><th style="text-align:right;">จำนวนเงิน</th><th></th></tr>
+        ${receipts
+          .map(
+            (r) => `
+          <tr>
+            <td>${r.receipt_number}</td>
+            <td>${new Date(r.created_at).toLocaleDateString('th-TH')}</td>
+            <td style="text-align:right;">${Number(r.amount).toLocaleString()} บาท</td>
+            <td style="text-align:center;"><a href="/api/sponsor/action?action=view_receipt&receipt_id=${r.id}" target="_blank" class="btn-small">ดู/พิมพ์</a></td>
+          </tr>`
+          )
+          .join('')}
+      </table>
+    </div>`
+    : '';
+
   return `
     <div class="section">
       <h2>สล็อตที่จองไว้ทั้งหมด</h2>
@@ -651,7 +674,8 @@ async function renderBookingsTab(sponsor, query) {
         <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะจ่ายเงิน</th><th style="text-align:center;">สถานะไฟล์</th><th style="text-align:center;">สถานะขึ้นจอ</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
         ${rows.join('') || '<tr><td colspan="10" class="muted">ยังไม่มีการจอง</td></tr>'}
       </table>
-    </div>`;
+    </div>
+    ${receiptsSection}`;
 }
 
 async function renderPaymentStep(sponsor, group) {
