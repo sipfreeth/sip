@@ -39,7 +39,7 @@ import { getSponsorCreditBalance, spendSponsorCredit } from '../../lib/sponsorAr
 import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendVerificationEmail } from '../../lib/emailVerification.js';
-import { createReceiptForGroup, getReceiptsForSponsor, getReceiptById, renderReceiptPage } from '../../lib/receipts.js';
+import { createReceiptForGroup, getReceiptsForSponsor, getReceiptById, getReceiptByGroupId, getReceiptForVerification, renderReceiptPage, renderVerifyPage } from '../../lib/receipts.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 import { sendAlertEmail } from '../../lib/alerts.js';
@@ -177,6 +177,14 @@ export default async function handler(req, res) {
       return;
     }
     res.status(405).send('Method not allowed');
+    return;
+  }
+
+  // ---------- ตรวจสอบใบเสร็จ (Public — ไม่ต้อง Login ใครก็ตรวจสอบได้ผ่าน QR/ลิงก์) ----------
+  if (actionParam === 'verify_receipt') {
+    const receipt = await getReceiptForVerification(req.query.number);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(renderVerifyPage(receipt));
     return;
   }
 
@@ -352,7 +360,7 @@ export default async function handler(req, res) {
       .eq('booking_group_id', receipt.booking_group_id);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.status(200).send(renderReceiptPage(receipt, bookings || [], sponsor));
+    res.status(200).send(renderReceiptPage(receipt, bookings || [], sponsor, process.env.APP_BASE_URL));
     return;
   }
 
