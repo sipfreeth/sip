@@ -578,6 +578,14 @@ async function renderBookingsTab(sponsor, query) {
   const contentOptions = (currentId) =>
     approvedContent.map((c) => `<option value="${c.id}" ${c.id === currentId ? 'selected' : ''}>${c.file_name}</option>`).join('');
 
+  // ดึงใบเสร็จทั้งหมดของ Sponsor รายนี้ไว้ล่วงหน้า แล้วจับคู่ด้วย booking_group_id — 1 ใบเสร็จอาจครอบหลาย Slot ที่จองพร้อมกัน
+  const receipts = await getReceiptsForSponsor(sponsor.id);
+  const receiptByGroup = {};
+  for (const r of receipts) receiptByGroup[r.booking_group_id] = r;
+
+  // รายชื่อ Office ทั้งหมดที่เคยจอง — ใช้ทำตัวเลือกใน Filter
+  const officeNames = [...new Set(bookings.map((b) => b.office_accounts?.office_name).filter(Boolean))];
+
   const rows = await Promise.all(
     bookings.map(async (b) => {
       const isExpired = b.payment_status === 'unpaid' && b.reserved_until && new Date(b.reserved_until) < new Date();
@@ -596,6 +604,11 @@ async function renderBookingsTab(sponsor, query) {
       // เห็นจำนวนรอบเล่นจริงแค่รายการที่จ่ายเงินแล้ว (ยังไม่จ่าย = ยังไม่ถูกส่งไปเล่นบนจอ)
       const playCount = b.payment_status === 'paid' ? await getPlayCountForBooking(b.office_account_id, b.slot_number, b.week_start) : null;
 
+      const receipt = receiptByGroup[b.booking_group_id];
+      const receiptLink = receipt
+        ? `<a href="/api/sponsor/action?action=view_receipt&receipt_id=${receipt.id}" target="_blank" class="btn-small">🧾 ใบเสร็จ</a>`
+        : '';
+
       const actions =
         b.payment_status === 'unpaid' && !isExpired
           ? `
@@ -606,7 +619,7 @@ async function renderBookingsTab(sponsor, query) {
             </form>`
           : isExpired
           ? '<span class="hint">หมดเวลาชำระเงิน</span>'
-          : '';
+          : receiptLink;
 
       const lockedNote =
         b.approval_status === 'approved' ? 'อนุมัติแล้ว' : b.approval_status === 'rejected' ? 'ไม่ผ่านการตรวจสอบ' : 'รอตรวจสอบ';
@@ -620,8 +633,9 @@ async function renderBookingsTab(sponsor, query) {
         ? `<span style="color:${AIRING_STATUS_LABEL[airingStatus].color}; font-weight:600;">${AIRING_STATUS_LABEL[airingStatus].text}</span>`
         : '<span class="muted">-</span>';
 
+      // data-* attribute ใช้ให้ JS ฝั่ง Client กรองแถวได้ ไม่ต้องโหลดหน้าใหม่
       return `
-        <tr>
+        <tr data-payment-status="${b.payment_status}" data-office="${b.office_accounts?.office_name || ''}" data-airing-status="${airingStatus || 'none'}">
           <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
           <td>${weekDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
           ${
@@ -644,38 +658,66 @@ async function renderBookingsTab(sponsor, query) {
     })
   );
 
-  const receipts = await getReceiptsForSponsor(sponsor.id);
-  const receiptsSection = receipts.length
-    ? `
-    <div class="section">
-      <h2>ใบเสร็จรับเงิน</h2>
-      <table>
-        <tr><th>เลขที่</th><th>วันที่ออก</th><th style="text-align:right;">จำนวนเงิน</th><th></th></tr>
-        ${receipts
-          .map(
-            (r) => `
-          <tr>
-            <td>${r.receipt_number}</td>
-            <td>${new Date(r.created_at).toLocaleDateString('th-TH')}</td>
-            <td style="text-align:right;">${Number(r.amount).toLocaleString()} บาท</td>
-            <td style="text-align:center;"><a href="/api/sponsor/action?action=view_receipt&receipt_id=${r.id}" target="_blank" class="btn-small">ดู/พิมพ์</a></td>
-          </tr>`
-          )
-          .join('')}
-      </table>
-    </div>`
-    : '';
+  const filterBar = `
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+      <select id="filterPayment" class="table-input" style="width:auto;">
+        <option value="">สถานะชำระเงิน: ทั้งหมด</option>
+        <option value="unpaid">รอชำระเงิน</option>
+        <option value="paid">ชำระแล้ว</option>
+        <option value="refunded">ได้เครดิตคืนแล้ว</option>
+      </select>
+      <select id="filterOffice" class="table-input" style="width:auto;">
+        <option value="">Office: ทั้งหมด</option>
+        ${officeNames.map((name) => `<option value="${name}">${name}</option>`).join('')}
+      </select>
+      <select id="filterAiring" class="table-input" style="width:auto;">
+        <option value="">สถานะขึ้นจอ: ทั้งหมด</option>
+        <option value="now_playing">🟢 กำลังเล่นอยู่</option>
+        <option value="upcoming">🔵 รอถึงคิว</option>
+        <option value="ended">⚪ สิ้นสุดแล้ว</option>
+        <option value="none">ยังไม่มีสถานะ</option>
+      </select>
+    </div>`;
+
+  const filterScript = `
+    <script>
+      (function () {
+        const paymentSel = document.getElementById('filterPayment');
+        const officeSel = document.getElementById('filterOffice');
+        const airingSel = document.getElementById('filterAiring');
+        const rows = document.querySelectorAll('#bookingsTable tbody tr[data-payment-status]');
+
+        function applyFilters() {
+          const p = paymentSel.value, o = officeSel.value, a = airingSel.value;
+          rows.forEach((row) => {
+            const match =
+              (!p || row.dataset.paymentStatus === p) &&
+              (!o || row.dataset.office === o) &&
+              (!a || row.dataset.airingStatus === a);
+            row.style.display = match ? '' : 'none';
+          });
+        }
+        [paymentSel, officeSel, airingSel].forEach((el) => el.addEventListener('change', applyFilters));
+      })();
+    </script>`;
 
   return `
     <div class="section">
       <h2>สล็อตที่จองไว้ทั้งหมด</h2>
-      <p class="hint">รายการ "รอชำระเงิน" ต้องจ่ายภายใน 15 นาทีหลังจอง ไม่งั้นระบบจะคืน slot ให้คนอื่นอัตโนมัติ</p>
-      <table>
-        <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะจ่ายเงิน</th><th style="text-align:center;">สถานะไฟล์</th><th style="text-align:center;">สถานะขึ้นจอ</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
-        ${rows.join('') || '<tr><td colspan="10" class="muted">ยังไม่มีการจอง</td></tr>'}
-      </table>
+      <p class="hint">รายการ "รอชำระเงิน" ต้องจ่ายภายใน 15 นาทีหลังจอง ไม่งั้นระบบจะคืน slot ให้คนอื่นอัตโนมัติ — กดปุ่ม "🧾 ใบเสร็จ" ที่แถวเพื่อดู/พิมพ์ใบเสร็จของรายการนั้นได้เลย</p>
+      ${filterBar}
+      <div style="max-height:520px; overflow-y:auto; border:1px solid #f0f0f0; border-radius:8px;">
+        <table id="bookingsTable" style="margin:0;">
+          <thead style="position:sticky; top:0; background:white; z-index:1;">
+            <tr><th>Office / Slot</th><th>สัปดาห์</th><th>ไฟล์ที่แสดง</th><th></th><th style="text-align:right;">ราคา</th><th style="text-align:center;">สถานะจ่ายเงิน</th><th style="text-align:center;">สถานะไฟล์</th><th style="text-align:center;">สถานะขึ้นจอ</th><th style="text-align:center;">เล่นแล้ว</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${rows.join('') || '<tr><td colspan="10" class="muted">ยังไม่มีการจอง</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
-    ${receiptsSection}`;
+    ${filterScript}`;
 }
 
 async function renderPaymentStep(sponsor, group) {
