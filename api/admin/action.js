@@ -35,6 +35,7 @@ import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MES
 import { sendVerificationEmail } from '../../lib/emailVerification.js';
 import { anonymizeMember } from '../../lib/memberCleanup.js';
 import { sendLinePushMessage } from '../../lib/linePush.js';
+import { createReceiptForGroup } from '../../lib/receipts.js';
 
 async function readBody(req) {
   let body = '';
@@ -799,10 +800,15 @@ export default async function handler(req, res) {
 
   // ---------- 10. BOOKING PAYMENT CONFIRMATION (manual — เผื่อระบบชำระเงินอัตโนมัติในอนาคต) ----------
   if (actionParam === 'booking_mark_paid') {
+    const bookingId = params.get('booking_id');
     await supabase
       .from('slot_bookings')
       .update({ payment_status: 'paid', payment_method: 'manual' })
-      .eq('id', params.get('booking_id'));
+      .eq('id', bookingId);
+
+    const { data: row } = await supabase.from('slot_bookings').select('booking_group_id').eq('id', bookingId).maybeSingle();
+    if (row?.booking_group_id) await createReceiptForGroup(row.booking_group_id);
+
     res.writeHead(302, { Location: '/api/admin/sponsors' });
     res.end();
     return;
