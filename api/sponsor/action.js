@@ -40,6 +40,7 @@ import { sendEmail } from '../../lib/email.js';
 import { createResetToken, verifyResetToken, markTokenUsed } from '../../lib/passwordReset.js';
 import { sendVerificationEmail } from '../../lib/emailVerification.js';
 import { createReceiptForGroup, getReceiptsForSponsor, getReceiptById, getReceiptByGroupId, getReceiptForVerification, renderReceiptPage, renderVerifyPage } from '../../lib/receipts.js';
+import { escapeHtml } from '../../lib/htmlEscape.js';
 import { sendMessage, getMessages, markThreadRead } from '../../lib/chat.js';
 import { getClientIp, checkLoginRateLimit, recordLoginAttempt, LOGIN_LOCKOUT_MESSAGE } from '../../lib/rateLimit.js';
 import { sendAlertEmail } from '../../lib/alerts.js';
@@ -1008,7 +1009,7 @@ const TERMS_CONTENT = `
 `;
 
 function renderSignupPage(error, formValues) {
-  const v = (name) => (formValues ? (formValues.get(name) || '') : '');
+  const v = (name) => escapeHtml(formValues ? (formValues.get(name) || '') : '');
   return `<!DOCTYPE html>
 <html lang="th">
 <head>
