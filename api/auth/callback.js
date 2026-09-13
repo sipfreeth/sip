@@ -385,7 +385,7 @@ export function renderPointsPage(member, history, tierScore, spendableBalance) {
 <body>
   ${renderMemberNav('points')}
   <div class="card">
-    <p style="color:#6b7280; margin:0;">${member.display_name ? member.display_name : 'สมาชิก'}</p>
+    <p style="color:#6b7280; margin:0;">${escapeAttr(member.display_name) || 'สมาชิก'}</p>
     <span class="tier-badge" style="background:${current.color};">${current.name}</span>
     <div class="balance-row">
       <div class="balance-box">
@@ -475,7 +475,7 @@ function renderShippingForm(reward, member, token, savedAddresses) {
   const addressOptions = savedAddresses
     .map(
       (a, i) =>
-        `<option value="${i}" data-name="${escapeAttr(a.recipient_name)}" data-phone="${escapeAttr(a.recipient_phone)}" data-address="${escapeAttr(a.recipient_address)}">${a.recipient_name} — ${a.recipient_address.slice(0, 30)}...</option>`
+        `<option value="${i}" data-name="${escapeAttr(a.recipient_name)}" data-phone="${escapeAttr(a.recipient_phone)}" data-address="${escapeAttr(a.recipient_address)}">${escapeAttr(a.recipient_name)} — ${escapeAttr(a.recipient_address.slice(0, 30))}...</option>`
     )
     .join('');
 
@@ -516,7 +516,7 @@ function renderShippingForm(reward, member, token, savedAddresses) {
     <form method="POST" action="/api/member-action?do=confirm">
       <input type="hidden" name="token" value="${token}" />
       <label>ชื่อ-นามสกุลผู้รับ</label>
-      <input type="text" id="fieldName" name="recipient_name" value="${member.display_name || ''}" required />
+      <input type="text" id="fieldName" name="recipient_name" value="${escapeAttr(member.display_name || '')}" required />
       <label>เบอร์โทรติดต่อ</label>
       <input type="tel" id="fieldPhone" name="recipient_phone" required placeholder="08xxxxxxxx" />
       <label>ที่อยู่จัดส่ง</label>
@@ -538,7 +538,13 @@ function renderShippingForm(reward, member, token, savedAddresses) {
 }
 
 function escapeAttr(str) {
-  return (str || '').replace(/"/g, '&quot;');
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function renderErrorPage(title, message) {
@@ -661,7 +667,7 @@ export function renderPetDashboard(member, pet, bag, closet, badges, spendableBa
 <link rel="manifest" href="/manifest.json" />
 <meta name="theme-color" content="#ff5b2e" />
 <script src="/theme.js" defer></script>
-<title>${pet.name || 'สัตว์เลี้ยงของฉัน'}</title>
+<title>${escapeAttr(pet.name) || 'สัตว์เลี้ยงของฉัน'}</title>
 <style>
   body { font-family: sans-serif; background: #f7f8fa; margin: 0; padding: 24px; color: #1b1f27; }
   .card { background: white; border-radius: 16px; padding: 24px; max-width: 420px; margin: 0 auto; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
@@ -696,15 +702,15 @@ export function renderPetDashboard(member, pet, bag, closet, badges, spendableBa
   <div class="card">
     ${
       pet.isSick
-        ? `<div class="sick-warning">🤒 ${pet.name || 'สัตว์เลี้ยง'}ป่วยแล้ว! ต้องใช้ยารักษาก่อนถึงจะเล่นด้วย/ได้ EXP ได้ตามปกติ</div>`
+        ? `<div class="sick-warning">🤒 ${escapeAttr(pet.name) || 'สัตว์เลี้ยง'}ป่วยแล้ว! ต้องใช้ยารักษาก่อนถึงจะเล่นด้วย/ได้ EXP ได้ตามปกติ</div>`
         : pet.isHungry
-        ? `<div class="hungry-warning">🍖 ${pet.name || 'สัตว์เลี้ยง'}หิวแล้ว! หยิบอาหารจากกระเป๋ามาให้หน่อยนะ</div>`
+        ? `<div class="hungry-warning">🍖 ${escapeAttr(pet.name) || 'สัตว์เลี้ยง'}หิวแล้ว! หยิบอาหารจากกระเป๋ามาให้หน่อยนะ</div>`
         : ''
     }
 
     <div class="pet-stage" style="background:${LEVEL_COLOR[pet.level]};">
       <div class="pet-emoji">${SPECIES_EMOJI[pet.species_id]}</div>
-      <div class="pet-name">${pet.name || pet.speciesName}</div>
+      <div class="pet-name">${escapeAttr(pet.name) || pet.speciesName}</div>
       <div class="pet-level">${pet.levelName} ${pet.isMaxLevel ? '⭐' : ''}</div>
       ${equippedItems.length ? `<div style="margin-top:6px; font-size:12px;">${equippedItems.map((i) => i.pet_shop_items?.name).join(', ')}</div>` : ''}
     </div>
