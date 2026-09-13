@@ -29,6 +29,7 @@ import {
 } from '../../lib/sponsorArea.js';
 import { listCustomerCards, isPromptPayConfigured, getPromptPayQrImageUrl, SUPPORTED_BANKS } from '../../lib/payments.js';
 import { getReceiptsForSponsor } from '../../lib/receipts.js';
+import { escapeHtml } from '../../lib/htmlEscape.js';
 
 const PAGES = ['content', 'book', 'bookings', 'profile', 'chat', 'qr'];
 
@@ -65,7 +66,7 @@ async function renderContentTab(sponsor) {
       return `
         <div class="content-card">
           ${preview}
-          <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${item.file_name}</p>
+          <p style="font-size:13px; font-weight:600; margin:8px 0 2px;">${escapeHtml(item.file_name)}</p>
           ${item.creative_id ? `<p class="hint" style="margin:0 0 6px;">🔗 QR: ${item.creative_id}</p>` : ''}
           <button class="btn-small btn-danger delete-content-btn" data-content-id="${item.id}" style="margin-top:8px;">ลบ</button>
         </div>`;
@@ -361,7 +362,7 @@ async function renderBookTab(sponsor, query) {
   const officeOptions = offices
     .map((o) => {
       const recommended = isOfficeRecommendedFor(o, sponsor, rulesMap);
-      return `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} — ${Number(o.price_per_week).toLocaleString()} บาท/สัปดาห์${recommended ? ' ⭐ (แนะนำ)' : ''}</option>`;
+      return `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${escapeHtml(o.office_name)} — ${Number(o.price_per_week).toLocaleString()} บาท/สัปดาห์${recommended ? ' ⭐ (แนะนำ)' : ''}</option>`;
     })
     .join('');
 
@@ -402,7 +403,7 @@ async function renderBookTab(sponsor, query) {
   const slotNumbers = Array.from({ length: slotCount }, (_, i) => i + 1);
   let availableCount = 0;
 
-  const contentOptionsHtml = approvedContent.map((c) => `<option value="${c.id}">${c.file_name}</option>`).join('');
+  const contentOptionsHtml = approvedContent.map((c) => `<option value="${c.id}">${escapeHtml(c.file_name)}</option>`).join('');
 
   const slotCheckboxes = slotNumbers
     .map((slotNum) => {
@@ -576,7 +577,7 @@ async function renderBookingsTab(sponsor, query) {
   const bookings = await getSponsorBookings(sponsor.id);
   const approvedContent = await getSponsorContent(sponsor.id);
   const contentOptions = (currentId) =>
-    approvedContent.map((c) => `<option value="${c.id}" ${c.id === currentId ? 'selected' : ''}>${c.file_name}</option>`).join('');
+    approvedContent.map((c) => `<option value="${c.id}" ${c.id === currentId ? 'selected' : ''}>${escapeHtml(c.file_name)}</option>`).join('');
 
   // ดึงใบเสร็จทั้งหมดของ Sponsor รายนี้ไว้ล่วงหน้า แล้วจับคู่ด้วย booking_group_id — 1 ใบเสร็จอาจครอบหลาย Slot ที่จองพร้อมกัน
   const receipts = await getReceiptsForSponsor(sponsor.id);
@@ -623,7 +624,7 @@ async function renderBookingsTab(sponsor, query) {
 
       const lockedNote =
         b.approval_status === 'approved' ? 'อนุมัติแล้ว' : b.approval_status === 'rejected' ? 'ไม่ผ่านการตรวจสอบ' : 'รอตรวจสอบ';
-      const contentCell = `${b.sponsor_content?.file_name || '-'}<br/><a href="/api/sponsor?page=chat" class="hint">${lockedNote} — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน (ขึ้นอยู่กับดุลยพินิจของทีมงาน)</a>`;
+      const contentCell = `${escapeHtml(b.sponsor_content?.file_name || '-')}<br/><a href="/api/sponsor?page=chat" class="hint">${lockedNote} — แจ้งทีมงานผ่านแชทถ้าต้องการเปลี่ยน (ขึ้นอยู่กับดุลยพินิจของทีมงาน)</a>`;
 
       const rejectionNote =
         b.approval_status === 'rejected' && b.rejection_reason ? `<div class="hint" style="color:#e76f51; margin-top:4px;">เหตุผล: ${b.rejection_reason}</div>` : '';
@@ -635,8 +636,8 @@ async function renderBookingsTab(sponsor, query) {
 
       // data-* attribute ใช้ให้ JS ฝั่ง Client กรองแถวได้ ไม่ต้องโหลดหน้าใหม่
       return `
-        <tr data-payment-status="${b.payment_status}" data-office="${b.office_accounts?.office_name || ''}" data-airing-status="${airingStatus || 'none'}">
-          <td>${b.office_accounts?.office_name || '-'} — Slot ${b.slot_number}</td>
+        <tr data-payment-status="${b.payment_status}" data-office="${escapeHtml(b.office_accounts?.office_name || '')}" data-airing-status="${airingStatus || 'none'}">
+          <td>${escapeHtml(b.office_accounts?.office_name || '-')} — Slot ${b.slot_number}</td>
           <td>${weekDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
           ${
             isLocked
@@ -1031,7 +1032,7 @@ async function renderProfileTab(sponsor) {
     ${
       !sponsor.email_verified_at
         ? `<div class="section" style="background:#fff1ec; border:1px solid #e76f51;">
-            <p style="color:#e76f51; font-weight:600; margin:0 0 8px;">⚠️ ยังไม่ได้ยืนยันอีเมล (${sponsor.email})</p>
+            <p style="color:#e76f51; font-weight:600; margin:0 0 8px;">⚠️ ยังไม่ได้ยืนยันอีเมล (${escapeHtml(sponsor.email)})</p>
             <form method="POST" action="/api/sponsor/action?action=resend_verification" style="display:inline;">
               <button class="btn-small">ส่งอีเมลยืนยันอีกครั้ง</button>
             </form>
@@ -1042,13 +1043,13 @@ async function renderProfileTab(sponsor) {
       <h2>ข้อมูลบริษัท</h2>
       <form method="POST" action="/api/sponsor/action?action=update_profile" class="stack-form">
         <label>ชื่อบริษัท</label>
-        <input type="text" name="company_name" value="${sponsor.company_name || ''}" required />
+        <input type="text" name="company_name" value="${escapeHtml(sponsor.company_name || '')}" required />
         <label>เลขประจำตัวผู้เสียภาษี</label>
         <input type="text" name="tax_id" value="${sponsor.tax_id || ''}" />
         <label>ที่อยู่</label>
-        <input type="text" name="address" value="${sponsor.address || ''}" />
+        <input type="text" name="address" value="${escapeHtml(sponsor.address || '')}" />
         <label>ชื่อผู้ติดต่อ</label>
-        <input type="text" name="contact_name" value="${sponsor.contact_name || ''}" />
+        <input type="text" name="contact_name" value="${escapeHtml(sponsor.contact_name || '')}" />
         <label>เบอร์โทร</label>
         <input type="text" name="contact_phone" value="${sponsor.contact_phone || ''}" />
         <label>ประเภทธุรกิจ *</label>
@@ -1253,7 +1254,7 @@ function renderLayout(activePage, sponsor, content) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="/theme.css" />
 <script src="/theme.js" defer></script>
-<title>Sponsor — ${sponsor.company_name}</title>
+<title>Sponsor — ${escapeHtml(sponsor.company_name)}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: sans-serif; background: #f7f8fa; margin: 0; color: #1b1f27; }
@@ -1286,7 +1287,7 @@ function renderLayout(activePage, sponsor, content) {
 </head>
 <body>
   <header>
-    <div class="brand">${sponsor.company_name}</div>
+    <div class="brand">${escapeHtml(sponsor.company_name)}</div>
     <nav>${nav}</nav>
     <div class="user-info">
       <a href="/api/sponsor/action?action=logout" class="logout-link">Logout</a>
