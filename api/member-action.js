@@ -16,6 +16,7 @@ import { createPet, playWithPet, buyItem, useInventoryItem, toggleEquip, getMemb
 import { getMemberFromSession } from '../lib/memberAuth.js';
 import { sendPushNotification } from '../lib/webpush.js';
 import { sendAlertEmail } from '../lib/alerts.js';
+import { escapeHtml } from '../lib/htmlEscape.js';
 import {
   getTierScoreForEvaluation,
   renderPointsPage,
@@ -431,7 +432,7 @@ function renderSuccessPage(reward, newBalance) {
 <body>
   <div class="card">
     <p style="font-size:20px;">🎉</p>
-    <p>แลก <strong>${reward.name}</strong> สำเร็จ</p>
+    <p>แลก <strong>${escapeHtml(reward.name)}</strong> สำเร็จ</p>
     <p class="hint">ทีมงานจะจัดส่งของรางวัลไปตามที่อยู่ที่แจ้งไว้เร็วๆ นี้</p>
     <p class="hint">Sip คงเหลือ: ${newBalance.toLocaleString()}</p>
   </div>
@@ -445,7 +446,7 @@ function renderPetShopPage({ foodItems, treatItems, supplementItems, medicineIte
   const renderItemCard = (item, isOwned) => `
     <div class="shop-item">
       <div>
-        <div class="item-name">${item.name}</div>
+        <div class="item-name">${escapeHtml(item.name)}</div>
         <div class="item-cost">${item.points_cost.toLocaleString()} Sip</div>
         ${item.description ? `<div class="item-desc">${item.description}</div>` : ''}
       </div>
@@ -571,7 +572,7 @@ function renderPrivacyPolicyPage() {
     <h1>นโยบายความเป็นส่วนตัว (Privacy Policy)</h1>
     <p class="updated">ปรับปรุงล่าสุด: 8 กันยายน 2569 (2026)</p>
 
-    <p>นโยบายฉบับนี้อธิบายวิธีการที่ <strong>บริษัท ซิปฟรี จำกัด (Sipfree Co., Ltd.)</strong> ("เรา") เก็บรวบรวม ใช้ เปิดเผย และคุ้มครองข้อมูลส่วนบุคคลของท่านในฐานะสมาชิกที่ใช้งานระบบสะสม Sip และแลกของรางวัลผ่านหน้าจอโฆษณาดิจิทัล ("ระบบ") ซึ่งเข้าถึงผ่าน LINE</p>
+    <p>นโยบายฉบับนี้อธิบายวิธีการที่ <strong>พุฒิพงศ์ พิสิษฐบรรณกร (ผู้ดำเนินการภายใต้ชื่อ "SipFree")</strong> ("เรา") เก็บรวบรวม ใช้ เปิดเผย และคุ้มครองข้อมูลส่วนบุคคลของท่านในฐานะสมาชิกที่ใช้งานระบบสะสม Sip และแลกของรางวัลผ่านหน้าจอโฆษณาดิจิทัล ("ระบบ") ซึ่งเข้าถึงผ่าน LINE</p>
     <p>การใช้งานระบบของท่านถือว่าท่านรับทราบและยอมรับนโยบายฉบับนี้</p>
 
     <h2>1. ข้อมูลที่เราเก็บรวบรวม</h2>
@@ -622,7 +623,7 @@ function renderPrivacyPolicyPage() {
 
     <h2>9. ช่องทางติดต่อ</h2>
     <div class="contact-box">
-      <p style="margin:0;"><strong>บริษัท ซิปฟรี จำกัด (Sipfree Co., Ltd.)</strong></p>
+      <p style="margin:0;"><strong>พุฒิพงศ์ พิสิษฐบรรณกร (ผู้ดำเนินการภายใต้ชื่อ "SipFree")</strong></p>
       <p style="margin:4px 0 0;">อีเมล: <a href="mailto:sipfreeth@gmail.com">sipfreeth@gmail.com</a></p>
     </div>
   </div>
