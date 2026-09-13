@@ -86,13 +86,20 @@ export default async function handler(req, res) {
     <script>
       const chatBox = document.getElementById('chatBox');
 
+      // Escape ให้ครบทุกตัวอักษรที่เสี่ยง XSS (เดิม Escape แค่ < ตัวเดียว ไม่พอ)
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
       function renderMessages(messages) {
         chatBox.innerHTML = messages.map((m) => {
           const mine = m.sender_type === 'office';
           return '<div style="margin-bottom:10px; text-align:' + (mine ? 'right' : 'left') + ';">' +
             '<div style="display:inline-block; max-width:75%; padding:8px 12px; border-radius:10px; background:' + (mine ? '#1b1f27' : '#f0f0f0') + '; color:' + (mine ? 'white' : '#1b1f27') + '; font-size:13px; text-align:left;">' +
-            '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + (m.sender_label || (mine ? 'คุณ' : 'ทีมงาน')) + '</div>' +
-            m.message.replace(/</g, '&lt;') +
+            '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + escapeHtml(m.sender_label || (mine ? 'คุณ' : 'ทีมงาน')) + '</div>' +
+            escapeHtml(m.message) +
             '</div></div>';
         }).join('');
         chatBox.scrollTop = chatBox.scrollHeight;
