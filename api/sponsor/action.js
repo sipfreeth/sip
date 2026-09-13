@@ -299,7 +299,11 @@ export default async function handler(req, res) {
     }
 
     const charge = event?.data;
-    if (charge?.object === 'charge' && charge.id && charge.paid) {
+    if (charge?.object === 'charge' && charge.id) {
+      // ⚠️ ห้ามเชื่อ charge.paid จาก Body ตรงๆ เด็ดขาด — ใครก็ส่ง Request ปลอมมาได้
+      // ต้องเช็คกับ Omise เองอีกทีผ่าน Secret Key ของเรา ถึงจะเชื่อถือได้จริง
+      const verifiedCharge = await getOmiseCharge(charge.id);
+      if (verifiedCharge.paid) {
       const { error } = await supabase
         .from('slot_bookings')
         .update({ payment_status: 'paid', payment_method: 'omise' })
@@ -318,6 +322,7 @@ export default async function handler(req, res) {
         if (updatedRows?.[0]?.booking_group_id) {
           await createReceiptForGroup(updatedRows[0].booking_group_id);
         }
+      }
       }
     }
     res.status(200).send('ok');
