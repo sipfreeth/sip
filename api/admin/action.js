@@ -430,25 +430,13 @@ export default async function handler(req, res) {
 
   // ---------- 6b. OFFICE ACCOUNT MANAGEMENT (super_admin, admin) ----------
   if (['office_account_create', 'office_account_update', 'office_account_delete', 'office_account_deactivate', 'office_account_reactivate'].includes(actionParam)) {
-    console.error('🔍OFFICE_DEBUG🔍 action:', actionParam, 'admin.role:', admin.role, 'canManageOffices:', can(admin.role, 'manage_offices'));
-
     if (!requirePermission(res, admin.role, 'manage_offices')) {
-      console.error('🔍OFFICE_DEBUG🔍 blocked by requirePermission — role ไม่มีสิทธิ์ manage_offices');
       return;
     }
 
     let dbError = null;
 
     if (actionParam === 'office_account_create') {
-      console.error('🔍OFFICE_DEBUG🔍 params:', {
-        office_name: params.get('office_name'),
-        username: params.get('username'),
-        email: params.get('email'),
-        price_per_week: params.get('price_per_week'),
-        sponsor_slot_count: params.get('sponsor_slot_count'),
-        has_password: Boolean(params.get('password')),
-      });
-
       const hash = await bcrypt.hash(params.get('password'), 10);
       const { data, error } = await supabase
         .from('office_accounts')
@@ -461,8 +449,6 @@ export default async function handler(req, res) {
           sponsor_slot_count: Number(params.get('sponsor_slot_count') || 18),
         })
         .select();
-
-      console.error('🔍OFFICE_DEBUG🔍 supabase result — data:', JSON.stringify(data), 'error:', JSON.stringify(error));
 
       dbError = error || (!data || !data.length ? { message: 'ไม่มีข้อผิดพลาดจากฐานข้อมูล แต่ไม่มีแถวถูกสร้างขึ้นจริง (อาจติด Row Level Security หรือ Policy บางอย่าง)' } : null);
 
@@ -613,6 +599,7 @@ export default async function handler(req, res) {
 
   // ---------- ส่งแจ้งเตือนชวนกลับมาใช้งาน (แทนที่การลบ) — ใช้ได้เฉพาะคนที่เพิ่มเพื่อน OA ไว้แล้วเท่านั้น ----------
   if (actionParam === 'member_notify_inactive') {
+    if (!requirePermission(res, admin.role, 'delete_member')) return;
     const memberId = params.get('member_id');
     const { data: member } = await supabase.from('members').select('line_user_id, display_name').eq('id', memberId).maybeSingle();
     if (!member) {
@@ -703,6 +690,7 @@ export default async function handler(req, res) {
 
   // ---------- บันทึกกฎการแนะนำ Office ตามประเภทธุรกิจ ----------
   if (actionParam === 'save_demographic_rule') {
+    if (!requirePermission(res, admin.role, 'manage_offices')) return;
     const businessType = params.get('business_type');
     const ageMin = Number(params.get('age_min'));
     const ageMax = Number(params.get('age_max'));
