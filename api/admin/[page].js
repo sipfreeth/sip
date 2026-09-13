@@ -10,6 +10,7 @@
 // ต้อง login ก่อนถึงจะเข้าได้ สิทธิ์แต่ละปุ่มเช็คตาม role (lib/adminAuth.js)
 
 import { supabase } from '../../lib/supabaseClient.js';
+import { escapeHtml } from '../../lib/htmlEscape.js';
 import { getTier, TIERS, getTierEvaluationPeriod, getCurrentYearStart } from '../../lib/tiers.js';
 import { requireAdmin, can } from '../../lib/adminAuth.js';
 import { listOfficeAccounts, getOfficeAccount, getSlots, renderOfficeAreaContent, renderDemographicsForm } from '../../lib/officeArea.js';
@@ -366,7 +367,7 @@ async function renderMembersTab(admin, tierFilter, detailMemberId) {
     .map(
       (m) => `
         <tr>
-          <td><a href="/api/admin/members?detail=${m.id}" class="link">${m.display_name || m.line_user_id}</a></td>
+          <td><a href="/api/admin/members?detail=${m.id}" class="link">${escapeHtml(m.display_name || m.line_user_id)}</a></td>
           <td><span class="tier-tag" style="background:${m.tier.color};">${m.tier.name}</span></td>
           <td style="text-align:right;">${m.tierScore.toLocaleString()}</td>
           <td style="text-align:right;">${m.spendableBalance.toLocaleString()}</td>
@@ -519,7 +520,7 @@ async function renderMemberDetail(admin, memberId) {
   return `
     <a href="/api/admin/members" class="link">&larr; กลับไปรายชื่อสมาชิก</a>
     <div class="section" style="margin-top:12px;">
-      <h2>${member.display_name || member.line_user_id}</h2>
+      <h2>${escapeHtml(member.display_name || member.line_user_id)}</h2>
       <span class="tier-tag" style="background:${current.color};">${current.name}</span>
       <p class="hint" style="margin-top:8px;">สมัครเมื่อ ${new Date(member.created_at).toLocaleDateString('th-TH')}</p>
     </div>
@@ -561,7 +562,7 @@ async function renderInactiveMembersTab(admin) {
       const daysInactive = Math.floor((Date.now() - new Date(m.last_active_at).getTime()) / (1000 * 60 * 60 * 24));
       return `
         <tr>
-          <td>${m.display_name || '-'}</td>
+          <td>${escapeHtml(m.display_name || '-')}</td>
           <td>${new Date(m.joined_at).toLocaleDateString('th-TH')}</td>
           <td>${new Date(m.last_active_at).toLocaleDateString('th-TH')}</td>
           <td style="text-align:center;">${(daysInactive / 365).toFixed(1)} ปี</td>
@@ -839,7 +840,7 @@ async function renderAdminsTab(admin) {
         ? a.role
         : fullAccess
         ? `<form method="POST" action="/api/admin/action?action=admin_update_role" class="inline-form">
-             <input type="hidden" name="username" value="${a.username}" />
+             <input type="hidden" name="username" value="${escapeHtml(a.username)}" />
              <select name="role" class="table-input">${roleOptions(a.role)}</select>
            </td>
            <td style="text-align:center;"><button class="btn-small">บันทึก</button></form>`
@@ -847,22 +848,22 @@ async function renderAdminsTab(admin) {
 
       const resetForm = isSelf
         ? ''
-        : `<form method="POST" action="/api/admin/action?action=admin_reset_password" class="inline-form">
-             <input type="hidden" name="username" value="${a.username}" />
+        : `<form method="POST" action="/api/admin/action?action=admin_reset_password" class="inline-form admin-reset-form">
+             <input type="hidden" name="username" value="${escapeHtml(a.username)}" />
              <input type="hidden" name="password" value="" />
-             <button type="button" class="btn-small" onclick="const p=prompt('ตั้งรหัสผ่านใหม่ให้ ${a.username}'); if(p){ this.form.password.value=p; this.form.submit(); }">รีเซ็ตรหัสผ่าน</button>
+             <button type="button" class="btn-small admin-reset-btn" data-username="${escapeHtml(a.username)}">รีเซ็ตรหัสผ่าน</button>
            </form>`;
 
       const deleteForm = isSelf
         ? ''
-        : `<form method="POST" action="/api/admin/action?action=admin_delete" onsubmit="return confirm('ลบบัญชี ${a.username}?')" style="display:inline;">
-             <input type="hidden" name="username" value="${a.username}" />
-             <button class="btn-small btn-danger">ลบ</button>
+        : `<form method="POST" action="/api/admin/action?action=admin_delete" class="admin-delete-form" style="display:inline;">
+             <input type="hidden" name="username" value="${escapeHtml(a.username)}" />
+             <button type="button" class="btn-small btn-danger admin-delete-btn" data-username="${escapeHtml(a.username)}">ลบ</button>
            </form>`;
 
       return `
         <tr>
-          <td>${a.username}${isSelf ? ' <span class="hint">(คุณ)</span>' : ''}</td>
+          <td>${escapeHtml(a.username)}${isSelf ? ' <span class="hint">(คุณ)</span>' : ''}</td>
           <td>${roleCell}</td>
           <td>${new Date(a.created_at).toLocaleDateString('th-TH')}</td>
           <td style="text-align:center;">${resetForm}</td>
@@ -901,7 +902,28 @@ async function renderAdminsTab(admin) {
         <tr><th>Username</th><th>Role</th><th>สร้างเมื่อ</th><th>รหัสผ่าน</th><th></th></tr>
         ${rows || '<tr><td colspan="5" class="muted">ไม่มีบัญชี</td></tr>'}
       </table>
-    </div>`;
+    </div>
+    <script>
+      // อ่านชื่อ Username จาก data-username แทนการฝังค่าลง onclick ตรงๆ — ปลอดภัยจาก Injection กว่า
+      document.querySelectorAll('.admin-reset-btn').forEach((btn) => {
+        btn.addEventListener('click', function () {
+          const username = this.dataset.username;
+          const p = prompt('ตั้งรหัสผ่านใหม่ให้ ' + username);
+          if (p) {
+            this.form.password.value = p;
+            this.form.submit();
+          }
+        });
+      });
+      document.querySelectorAll('.admin-delete-btn').forEach((btn) => {
+        btn.addEventListener('click', function () {
+          const username = this.dataset.username;
+          if (confirm('ลบบัญชี ' + username + '?')) {
+            this.form.submit();
+          }
+        });
+      });
+    </script>`;
 }
 
 // ---------- Office Area tab (admin/staff เข้าดู/แก้ office ไหนก็ได้) ----------
@@ -919,7 +941,7 @@ async function renderOfficeTab(admin, selectedOfficeId) {
   const officeAccount = await getOfficeAccount(activeId);
 
   const officeOptions = offices
-    .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${o.office_name} (${o.username})${o.email_verified_at ? '' : ' ⚠️'}</option>`)
+    .map((o) => `<option value="${o.id}" ${String(o.id) === String(activeId) ? 'selected' : ''}>${escapeHtml(o.office_name)} (${escapeHtml(o.username)})${o.email_verified_at ? '' : ' ⚠️'}</option>`)
     .join('');
 
   const picker = `
@@ -1042,11 +1064,11 @@ function renderOfficeAccountManagement(offices) {
           <td>
             <form method="POST" action="/api/admin/action?action=office_account_update" class="inline-form">
               <input type="hidden" name="office_id" value="${o.id}" />
-              <input type="text" name="office_name" value="${o.office_name}" class="table-input" />
+              <input type="text" name="office_name" value="${escapeHtml(o.office_name)}" class="table-input" />
           </td>
-          <td>${o.username}</td>
+          <td>${escapeHtml(o.username)}</td>
           <td>
-              <input type="email" name="email" value="${o.email || ''}" placeholder="สำหรับลืมรหัสผ่าน" class="table-input" />
+              <input type="email" name="email" value="${escapeHtml(o.email || '')}" placeholder="สำหรับลืมรหัสผ่าน" class="table-input" />
           </td>
           <td>
               <input type="number" name="price_per_week" value="${o.price_per_week || 0}" class="table-input" style="width:100px;" step="0.01" />
@@ -1202,7 +1224,7 @@ async function renderSponsorsTab(admin, query) {
         .map(
           (s) => `
         <a href="/api/admin/sponsors?q=${encodeURIComponent(keyword)}&sponsor_id=${s.id}" class="link" style="display:block; padding:8px 0; border-bottom:1px solid #f0f0f0;">
-          <strong>${s.sponsor_code}</strong> — ${s.company_name} <span class="hint">(${s.email})</span>
+          <strong>${escapeHtml(s.sponsor_code)}</strong> — ${escapeHtml(s.company_name)} <span class="hint">(${escapeHtml(s.email)})</span>
           ${s.email_verified_at ? '<span class="hint" style="color:#06c755;">✓ ยืนยันอีเมลแล้ว</span>' : '<span class="hint" style="color:#e76f51;">⚠️ ยังไม่ยืนยันอีเมล</span>'}
         </a>`
         )
@@ -1243,11 +1265,11 @@ async function renderSponsorsTab(admin, query) {
             c.file_type === 'video'
               ? `<video src="${url}" controls style="width:100%; max-height:120px; border-radius:8px;"></video>`
               : `<img src="${url}" style="width:100%; max-height:120px; object-fit:cover; border-radius:8px;" />`;
-          return `<div class="content-review-card">${preview}<p style="font-size:12px; margin:6px 0 0;">${c.file_name}</p></div>`;
+          return `<div class="content-review-card">${preview}<p style="font-size:12px; margin:6px 0 0;">${escapeHtml(c.file_name)}</p></div>`;
         })
       );
 
-      const approvedOptionsHtml = approvedContentList.map((c) => `<option value="${c.id}">${c.file_name}</option>`).join('');
+      const approvedOptionsHtml = approvedContentList.map((c) => `<option value="${c.id}">${escapeHtml(c.file_name)}</option>`).join('');
 
       const bookingRows = (bookings.data || [])
         .map((b) => {
@@ -1285,15 +1307,15 @@ async function renderSponsorsTab(admin, query) {
         <form method="POST" action="/api/admin/action?action=sponsor_account_update" class="stack-form" style="max-width:600px;">
           <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-            <div><label>ชื่อบริษัท</label><input type="text" name="company_name" value="${sponsor.company_name || ''}" required /></div>
-            <div><label>อีเมล (username)</label><input type="email" name="email" value="${sponsor.email || ''}" required /></div>
+            <div><label>ชื่อบริษัท</label><input type="text" name="company_name" value="${escapeHtml(sponsor.company_name || '')}" required /></div>
+            <div><label>อีเมล (username)</label><input type="email" name="email" value="${escapeHtml(sponsor.email || '')}" required /></div>
             <div><label>เลขประจำตัวผู้เสียภาษี</label><input type="text" name="tax_id" value="${sponsor.tax_id || ''}" /></div>
-            <div><label>ชื่อผู้ติดต่อ</label><input type="text" name="contact_name" value="${sponsor.contact_name || ''}" /></div>
+            <div><label>ชื่อผู้ติดต่อ</label><input type="text" name="contact_name" value="${escapeHtml(sponsor.contact_name || '')}" /></div>
             <div><label>เบอร์โทร</label><input type="text" name="contact_phone" value="${sponsor.contact_phone || ''}" /></div>
             <div><label>ประเภทธุรกิจ</label><input type="text" name="business_type" value="${sponsor.business_type || ''}" /></div>
           </div>
           <label>ที่อยู่</label>
-          <input type="text" name="address" value="${sponsor.address || ''}" />
+          <input type="text" name="address" value="${escapeHtml(sponsor.address || '')}" />
           <label>ตั้งรหัสผ่านใหม่ (เว้นว่างถ้าไม่เปลี่ยน)</label>
           <input type="password" name="password" />
           <button type="submit" class="btn-primary" style="margin-top:12px;">บันทึก</button>
@@ -1302,11 +1324,11 @@ async function renderSponsorsTab(admin, query) {
           <input type="hidden" name="sponsor_id" value="${sponsor.id}" />
           <button type="submit" class="btn-small btn-danger">ลบบัญชีนี้</button>
         </form>`
-        : `<p class="hint">ชื่อบริษัท: ${sponsor.company_name} — อีเมล: ${sponsor.email} — เบอร์โทร: ${sponsor.contact_phone || '-'}</p>`;
+        : `<p class="hint">ชื่อบริษัท: ${escapeHtml(sponsor.company_name)} — อีเมล: ${escapeHtml(sponsor.email)} — เบอร์โทร: ${escapeHtml(sponsor.contact_phone || '-')}</p>`;
 
       detailSection = `
         <div class="section">
-          <h2>${sponsor.company_name} <span class="hint">(Code: ${sponsor.sponsor_code})</span></h2>
+          <h2>${escapeHtml(sponsor.company_name)} <span class="hint">(Code: ${escapeHtml(sponsor.sponsor_code)})</span></h2>
           <p style="font-size:13px; margin:0 0 8px;">${
             sponsor.email_verified_at
               ? `<span style="color:#06c755;">✓ ยืนยันอีเมลแล้ว</span> (${new Date(sponsor.email_verified_at).toLocaleDateString('th-TH')})`
@@ -1409,7 +1431,7 @@ function renderAccountTab(admin) {
   return `
     <div class="section">
       <h2>บัญชีของฉัน</h2>
-      <p class="hint">Username: ${admin.username} — Role: ${admin.role}</p>
+      <p class="hint">Username: ${escapeHtml(admin.username)} — Role: ${admin.role}</p>
     </div>
     <div class="section">
       <h2>เปลี่ยนรหัสผ่าน</h2>
@@ -1451,7 +1473,7 @@ async function renderChatTab(admin, query) {
             <strong style="font-size:13px;">${label}</strong>
             ${t.unreadCount > 0 ? `<span class="tier-tag" style="background:#e76f51;">${t.unreadCount}</span>` : ''}
           </div>
-          <p class="hint" style="margin:2px 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${t.lastSenderLabel || ''}: ${t.lastMessage}</p>
+          <p class="hint" style="margin:2px 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(t.lastSenderLabel || '')}: ${escapeHtml(t.lastMessage)}</p>
         </a>`;
     })
     .join('');
@@ -1472,13 +1494,20 @@ async function renderChatTab(admin, query) {
         const threadId = ${JSON.stringify(String(query.thread_id))};
         const chatBox = document.getElementById('chatBox');
 
+        // Escape ให้ครบทุกตัวอักษรที่เสี่ยง XSS (เดิม Escape แค่ < ตัวเดียว ไม่พอ)
+        function escapeHtml(str) {
+          const div = document.createElement('div');
+          div.textContent = str;
+          return div.innerHTML;
+        }
+
         function renderMessages(messages) {
           chatBox.innerHTML = messages.map((m) => {
             const mine = m.sender_type === 'admin';
             return '<div style="margin-bottom:10px; text-align:' + (mine ? 'right' : 'left') + ';">' +
               '<div style="display:inline-block; max-width:75%; padding:8px 12px; border-radius:10px; background:' + (mine ? '#1b1f27' : '#f0f0f0') + '; color:' + (mine ? 'white' : '#1b1f27') + '; font-size:13px; text-align:left;">' +
-              '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + (m.sender_label || m.sender_type) + '</div>' +
-              m.message.replace(/</g, '&lt;') +
+              '<div class="hint" style="color:#9ca3af; margin-bottom:2px;">' + escapeHtml(m.sender_label || m.sender_type) + '</div>' +
+              escapeHtml(m.message) +
               '</div></div>';
           }).join('');
           chatBox.scrollTop = chatBox.scrollHeight;
@@ -1744,7 +1773,7 @@ function renderLayout(activePage, admin, content) {
     <div class="brand">QR Tracker Admin</div>
     <nav>${nav}</nav>
     <div class="user-info">
-      <span>${admin.username} (${admin.role})</span>
+      <span>${escapeHtml(admin.username)} (${admin.role})</span>
       <a href="/api/admin/action?action=logout" class="logout-link">Logout</a>
     </div>
   </header>
