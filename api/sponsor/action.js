@@ -479,10 +479,12 @@ export default async function handler(req, res) {
     const contentId = params.get('content_id');
 
     // เช็คก่อนว่าไฟล์นี้ถูกผูกกับการจอง Slot อยู่หรือไม่ (ที่ยังไม่ถูกยกเลิก/refund) — ถ้ามีลบไม่ได้ตามกฎ Foreign Key ของฐานข้อมูล
+    // ต้องกรอง sponsor_id ด้วย ไม่งั้นคนอื่นเดา content_id ของ Sponsor คนอื่นแล้วเห็นว่าจองอยู่ที่ Office/Slot ไหนได้
     const { data: usedIn } = await supabase
       .from('slot_bookings')
       .select('slot_number, week_start, office_accounts(office_name)')
       .eq('sponsor_content_id', contentId)
+      .eq('sponsor_id', sponsor.id)
       .neq('payment_status', 'refunded');
 
     if (usedIn && usedIn.length > 0) {
