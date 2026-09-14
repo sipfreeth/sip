@@ -27,7 +27,7 @@
 import bcrypt from 'bcryptjs';
 import { supabase } from '../../lib/supabaseClient.js';
 import { requireAdmin, requirePermission, can, createSessionCookie, clearSessionCookie } from '../../lib/adminAuth.js';
-import { createUploadTarget, saveSlotContent, saveOfficeDemographics } from '../../lib/officeArea.js';
+import { createUploadTarget, saveSlotContent, saveOfficeDemographics, getDownloadableContent } from '../../lib/officeArea.js';
 import { updateBookingApproval, grantSponsorCredit, adminUpdateBookingContent, getPreviouslyApprovedContent, saveDemographicRule, getAiringStatus } from '../../lib/sponsorArea.js';
 import { sendMessage, getMessages, markThreadRead, getAdminChatThreads } from '../../lib/chat.js';
 import { toCsv, sendCsv } from '../../lib/csv.js';
@@ -130,6 +130,20 @@ export default async function handler(req, res) {
     await markThreadRead(threadType, threadId, 'admin');
     res.setHeader('Content-Type', 'application/json');
     res.status(200).json({ messages });
+    return;
+  }
+
+  // ---------- รายการไฟล์พร้อมลิงก์ดาวน์โหลด สำหรับดาวน์โหลดไปอัปโหลดเข้า CMS เอง (แทนที่ Push/Pull API) ----------
+  if (actionParam === 'get_download_package' && req.method === 'GET') {
+    const officeId = req.query.office;
+    const weekStart = req.query.week;
+    if (!officeId || !weekStart) {
+      res.status(400).json({ error: 'ต้องระบุ office และ week' });
+      return;
+    }
+    const items = await getDownloadableContent(officeId, weekStart);
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({ items });
     return;
   }
 
