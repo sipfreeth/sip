@@ -972,12 +972,108 @@ async function renderOfficeTab(admin, selectedOfficeId) {
 
   const playStats = await renderPlaybackStats(officeAccount.id);
 
+  const downloadSection = renderDownloadPackageSection(officeAccount.id);
+
   const demographicsSection = renderDemographicsForm(officeAccount, {
     saveAction: `/api/admin/action?action=office_save_demographics&office=${officeAccount.id}`,
     isOnboarding: false,
   });
 
-  return manageSection + picker + officeContent + playStats + demographicsSection;
+  return manageSection + picker + officeContent + downloadSection + playStats + demographicsSection;
+}
+
+// ---------- ส่วนดาวน์โหลดไฟล์ไปอัปโหลดเข้า CMS เอง (แทนที่ Push/Pull API ที่ CMS ไม่รองรับ) ----------
+function renderDownloadPackageSection(officeAccountId) {
+  // สร้างรายการสัปดาห์เอง เริ่มจาก "สัปดาห์นี้" (ไม่ใช้ getBookableWeeks เพราะนั่นเริ่มจากสัปดาห์หน้าเท่านั้น — Admin ต้องโหลดสัปดาห์ปัจจุบันที่กำลังเล่นอยู่ได้ด้วย)
+  const now = new Date();
+  const currentMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayOfWeek = currentMonday.getDay();
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+  currentMonday.setDate(currentMonday.getDate() - daysSinceMonday);
+
+  const weeks = [];
+  for (let i = 0; i < 6; i++) {
+    const w = new Date(currentMonday);
+    w.setDate(currentMonday.getDate() + i * 7);
+    weeks.push(w);
+  }
+
+  const weekOptions = weeks
+    .map((w, i) => {
+      const iso = w.toISOString().slice(0, 10);
+      const label = w.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) + (i === 0 ? ' (สัปดาห์นี้)' : '');
+      return `<option value="${iso}">${label}</option>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <h2>📥 ดาวน์โหลดไฟล์ไปอัปโหลดเข้า CMS</h2>
+      <p class="hint">รวมไฟล์ของ Office เอง + Sponsor ทุกรายที่จ่ายเงิน+อนุมัติแล้วในสัปดาห์ที่เลือก — ดาวน์โหลดเป็น ZIP เดียว หรือดูรายการแยกทีละไฟล์ด้านล่างก็ได้</p>
+      <label>เลือกสัปดาห์</label>
+      <select id="downloadWeekSelect" class="table-input" style="max-width:280px;">
+        ${weekOptions}
+      </select>
+      <button type="button" class="btn-primary" style="margin-top:10px;" onclick="loadDownloadList('${officeAccountId}')">โหลดรายการไฟล์</button>
+      <div id="downloadListArea" style="margin-top:16px;"></div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+      let currentDownloadItems = [];
+
+      async function loadDownloadList(officeId) {
+        const week = document.getElementById('downloadWeekSelect').value;
+        const area = document.getElementById('downloadListArea');
+        area.innerHTML = '<p class="hint">กำลังโหลด...</p>';
+
+        const res = await fetch('/api/admin/action?action=get_download_package&office=' + officeId + '&week=' + week);
+        const data = await res.json();
+        currentDownloadItems = data.items || [];
+
+        if (!currentDownloadItems.length) {
+          area.innerHTML = '<p class="muted">ไม่มีไฟล์พร้อมเล่นในสัปดาห์นี้เลย</p>';
+          return;
+        }
+
+        const rows = currentDownloadItems
+          .map(
+            (item, i) =>
+              '<tr><td>' + item.slotLabel + '</td><td>' + item.downloadFileName + '</td>' +
+              '<td style="text-align:center;"><a href="' + item.downloadUrl + '" download="' + item.downloadFileName + '" class="btn-small">ดาวน์โหลด</a></td></tr>'
+          )
+          .join('');
+
+        area.innerHTML =
+          '<button type="button" class="btn-primary" style="margin-bottom:10px;" onclick="downloadAllAsZip()">📦 ดาวน์โหลดทั้งหมดเป็น ZIP (' + currentDownloadItems.length + ' ไฟล์)</button>' +
+          '<p class="hint" id="zipStatus"></p>' +
+          '<table><tr><th>Slot</th><th>ชื่อไฟล์</th><th></th></tr>' + rows + '</table>';
+      }
+
+      async function downloadAllAsZip() {
+        const statusEl = document.getElementById('zipStatus');
+        const zip = new JSZip();
+
+        for (let i = 0; i < currentDownloadItems.length; i++) {
+          const item = currentDownloadItems[i];
+          statusEl.textContent = 'กำลังดาวน์โหลด ' + (i + 1) + '/' + currentDownloadItems.length + ' — ' + item.downloadFileName;
+          const res = await fetch(item.downloadUrl);
+          const blob = await res.blob();
+          zip.file(item.downloadFileName, blob);
+        }
+
+        statusEl.textContent = 'กำลังบีบอัดเป็น ZIP...';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'content-package-' + document.getElementById('downloadWeekSelect').value + '.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+
+        statusEl.textContent = 'ดาวน์โหลดสำเร็จ!';
+      }
+    </script>`;
 }
 
 // ยอดรอบการเล่นเนื้อหาจริงบนจอ (ข้อมูลจาก CMS ที่ยิงเข้ามาทาง /api/playback-log)
